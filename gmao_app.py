@@ -37,9 +37,6 @@ def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     
-    # Supprimer les anciennes tables si elles existent
-    c.execute("DROP TABLE IF EXISTS equipements")
-    c.execute("DROP TABLE IF EXISTS interventions")
     
     # Créer les nouvelles tables avec les bonnes colonnes
     c.execute('''CREATE TABLE IF NOT EXISTS equipements (
@@ -96,7 +93,6 @@ def ouvrir_gmao():
         if not numero_serie:
             messagebox.showwarning("Attention", "Veuillez saisir un numéro de série")
             return
-        print(sqlite3.connect)
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("SELECT * FROM equipements WHERE numero_serie=?", (numero_serie,))
@@ -228,6 +224,7 @@ def ouvrir_gmao():
             fenetre_intervention.title("Nouvelle Intervention")
             fenetre_intervention.geometry("500x400")
             
+
             main_frame = tk.Frame(fenetre_intervention, padx=20, pady=20)
             main_frame.pack(fill=tk.BOTH, expand=True)
             
@@ -401,3 +398,4 @@ def ouvrir_gmao():
 # === DÉMARRAGE DE L'APPLICATION ===
 if __name__ == '__main__':
     authentification()
+    
