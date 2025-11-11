@@ -697,10 +697,338 @@ def ouvrir_gmao():
             for p in pieces_used:
                 tk.Label(fen_det, text=f"- {p[0]} x{p[1]} (coût: {p[2]:.2f})").pack(anchor="w", padx=20)
 
+        # === NEW MODIFIER FUNCTION ===
+        def modifier_intervention():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showwarning("Attention", "Sélectionnez une intervention à modifier.")
+                return
+            vals = tree.item(sel[0], 'values')
+            intervention_id = vals[0]
+            
+            # Create modification window
+            fen_mod = tk.Toplevel(fenetre_historique)
+            fen_mod.title("Modifier l'intervention")
+            fen_mod.geometry("620x520")
+            
+            # Get current intervention data
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT date_entree, date_sortie, technicien, cout, details_reparation FROM interventions WHERE id=?", (intervention_id,))
+            row = c.fetchone()
+            # Get pieces used for this intervention
+            c.execute('''SELECT ip.piece_id, p.nom, ip.quantite_utilisee, ip.cout_total FROM intervention_pieces ip
+                         JOIN pieces p ON ip.piece_id = p.id
+                         WHERE ip.intervention_id=?''', (intervention_id,))
+            pieces_used = c.fetchall()
+            conn.close()
+            
+            main_frame_m = tk.Frame(fen_mod, padx=20, pady=20)
+            main_frame_m.pack(fill=tk.BOTH, expand=True)
+            tk.Label(main_frame_m, text="Modifier Intervention", font=("Arial", 14, "bold")).grid(row=0, column=0, columnspan=3, pady=(0, 20))
+
+            tk.Label(main_frame_m, text="Date d'entrée *:", font=("Arial", 10)).grid(row=1, column=0, sticky="w", pady=5)
+            entry_date_entree = tk.Entry(main_frame_m, font=("Arial", 10))
+            entry_date_entree.grid(row=1, column=1, sticky="ew", pady=5)
+            entry_date_entree.insert(0, row[0] or "")
+
+            tk.Label(main_frame_m, text="Date de sortie:", font=("Arial", 10)).grid(row=2, column=0, sticky="w", pady=5)
+            entry_date_sortie = tk.Entry(main_frame_m, font=("Arial", 10))
+            entry_date_sortie.grid(row=2, column=1, sticky="ew", pady=5)
+            entry_date_sortie.insert(0, row[1] or "")
+
+            tk.Label(main_frame_m, text="Technicien:", font=("Arial", 10)).grid(row=3, column=0, sticky="w", pady=5)
+            entry_technicien = tk.Entry(main_frame_m, font=("Arial", 10))
+            entry_technicien.grid(row=3, column=1, sticky="ew", pady=5)
+            entry_technicien.insert(0, row[2] or "")
+
+            tk.Label(main_frame_m, text="Coût main d'oeuvre:", font=("Arial", 10)).grid(row=4, column=0, sticky="w", pady=5)
+            entry_cout_main = tk.Entry(main_frame_m, font=("Arial", 10))
+            entry_cout_main.grid(row=4, column=1, sticky="ew", pady=5)
+            # Calculate labor cost: total cost minus parts cost
+            total_cost = row[3] or 0.0
+            parts_cost = sum(p[3] for p in pieces_used)
+            labor_cost = total_cost - parts_cost
+            entry_cout_main.insert(0, f"{labor_cost:.2f}")
+
+            tk.Label(main_frame_m, text="Détails de réparation:", font=("Arial", 10)).grid(row=5, column=0, sticky="nw", pady=5)
+            text_details = tk.Text(main_frame_m, font=("Arial", 10), width=50, height=8)
+            text_details.grid(row=5, column=1, sticky="ew", pady=5, columnspan=2)
+            text_details.insert("1.0", row[4] or "")
+
+            # Pieces management (load existing pieces)
+            pieces_selectionnees_mod = []
+            for piece in pieces_used:
+                pieces_selectionnees_mod.append({
+                    'piece_id': piece[0],
+                    'nom': piece[1],
+                    'quantite': piece[2],
+                    'prix': piece[3] / piece[2] if piece[2] > 0 else 0,  # Calculate unit price
+                    'cout_total': piece[3]
+                })
+
+            def gerer_pieces_modifiees():
+                """Manage pieces for modification"""
+                fen_pieces = tk.Toplevel(fen_mod)
+                fen_pieces.title("Gérer les pièces de l'intervention")
+                fen_pieces.geometry("800x450")
+
+                # Left: available pieces list
+                left_frame = tk.Frame(fen_pieces)
+                left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=8, pady=8)
+                cols = ("ID", "Nom", "Réf", "Prix", "Stock")
+                tree_left = ttk.Treeview(left_frame, columns=cols, show="headings", height=15)
+                for col in cols:
+                    tree_left.heading(col, text=col)
+                    tree_left.column(col, width=(50 if col == "ID" else 120))
+                tree_left.pack(fill=tk.BOTH, expand=True)
+                scroll_left = ttk.Scrollbar(left_frame, orient=tk.VERTICAL, command=tree_left.yview)
+                tree_left.configure(yscrollcommand=scroll_left.set)
+                scroll_left.pack(side=tk.RIGHT, fill=tk.Y)
+
+                # Right: selected pieces
+                right_frame = tk.Frame(fen_pieces)
+                right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=8, pady=8)
+                cols2 = ("Piece ID", "Nom", "Quantité", "Prix unitaire", "Coût total")
+                tree_right = ttk.Treeview(right_frame, columns=cols2, show="headings", height=15)
+                for col in cols2:
+                    tree_right.heading(col, text=col)
+                    tree_right.column(col, width=(80 if col == "Piece ID" else 110))
+                tree_right.pack(fill=tk.BOTH, expand=True)
+                scroll_right = ttk.Scrollbar(right_frame, orient=tk.VERTICAL, command=tree_right.yview)
+                tree_right.configure(yscrollcommand=scroll_right.set)
+                scroll_right.pack(side=tk.RIGHT, fill=tk.Y)
+
+                # Load pieces list
+                def load_pieces_list():
+                    for it in tree_left.get_children():
+                        tree_left.delete(it)
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
+                    c.execute("SELECT id, nom, reference, prix_unitaire, quantite_stock FROM pieces ORDER BY nom")
+                    rows = c.fetchall()
+                    conn.close()
+                    for r in rows:
+                        tree_left.insert("", tk.END, values=r)
+
+                load_pieces_list()
+
+                # Refresh right panel with current pieces
+                def refresh_right_mod():
+                    for it in tree_right.get_children():
+                        tree_right.delete(it)
+                    for p in pieces_selectionnees_mod:
+                        tree_right.insert("", tk.END, values=(p['piece_id'], p['nom'], p['quantite'], f"{p['prix']:.2f}", f"{p['cout_total']:.2f}"))
+
+                refresh_right_mod()
+
+                def ajouter_piece_mod():
+                    sel = tree_left.selection()
+                    if not sel:
+                        messagebox.showwarning("Attention", "Sélectionnez une pièce à ajouter")
+                        return
+                    vals = tree_left.item(sel[0], 'values')
+                    piece_id, nom, ref, prix, stock = vals
+                    # Check if already selected
+                    for p in pieces_selectionnees_mod:
+                        if p['piece_id'] == piece_id:
+                            messagebox.showwarning("Attention", "Cette pièce est déjà sélectionnée")
+                            return
+                    # Ask for quantity
+                    qte_str = simpledialog.askstring("Quantité", f"Quantité à utiliser pour '{nom}' (stock {stock}) :", parent=fen_pieces)
+                    if qte_str is None:
+                        return
+                    try:
+                        qte = int(qte_str)
+                        if qte <= 0:
+                            raise ValueError()
+                    except ValueError:
+                        messagebox.showwarning("Erreur", "Quantité invalide")
+                        return
+                    if qte > int(stock):
+                        messagebox.showwarning("Erreur", f"Quantité demandée ({qte}) supérieure au stock ({stock})")
+                        return
+                    cout_total = round(float(prix) * qte, 2)
+                    pieces_selectionnees_mod.append({'piece_id': piece_id, 'nom': nom, 'prix': float(prix), 'quantite': qte, 'cout_total': cout_total})
+                    refresh_right_mod()
+
+                def modifier_quantite():
+                    sel = tree_right.selection()
+                    if not sel:
+                        messagebox.showwarning("Attention", "Sélectionnez une pièce dans la liste de droite")
+                        return
+                    vals = tree_right.item(sel[0], 'values')
+                    piece_id = vals[0]
+                    nom = vals[1]
+                    # Find piece in stock to get current stock
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
+                    c.execute("SELECT quantite_stock FROM pieces WHERE id=?", (piece_id,))
+                    row = c.fetchone()
+                    conn.close()
+                    stock = row[0] if row else 0
+                    # Get current quantity
+                    current_qte = 0
+                    for p in pieces_selectionnees_mod:
+                        if p['piece_id'] == piece_id:
+                            current_qte = p['quantite']
+                            break
+                    # Ask for new quantity
+                    qte_str = simpledialog.askstring("Quantité", f"Modifier quantité pour '{nom}' (stock {stock}) :", initialvalue=str(current_qte), parent=fen_pieces)
+                    if qte_str is None:
+                        return
+                    try:
+                        qte = int(qte_str)
+                        if qte <= 0:
+                            raise ValueError()
+                    except ValueError:
+                        messagebox.showwarning("Erreur", "Quantité invalide")
+                        return
+                    if qte > int(stock):
+                        messagebox.showwarning("Erreur", f"Quantité demandée ({qte}) supérieure au stock ({stock})")
+                        return
+                    # Update piece quantity
+                    for p in pieces_selectionnees_mod:
+                        if p['piece_id'] == piece_id:
+                            p['quantite'] = qte
+                            p['cout_total'] = round(p['prix'] * qte, 2)
+                            break
+                    refresh_right_mod()
+
+                def supprimer_selection_mod():
+                    sel = tree_right.selection()
+                    if not sel:
+                        messagebox.showwarning("Attention", "Sélectionnez une pièce dans la liste de droite")
+                        return
+                    vals = tree_right.item(sel[0], 'values')
+                    piece_id = vals[0]
+                    pieces_selectionnees_mod[:] = [p for p in pieces_selectionnees_mod if p['piece_id'] != piece_id]
+                    refresh_right_mod()
+
+                btn_frame_mod = tk.Frame(fen_pieces)
+                btn_frame_mod.pack(fill=tk.X, pady=6)
+                tk.Button(btn_frame_mod, text="➕ Ajouter pièce", command=ajouter_piece_mod, bg="#2196F3").pack(side=tk.LEFT, padx=6)
+                tk.Button(btn_frame_mod, text="✏️ Modifier quantité", command=modifier_quantite, bg="#FFC107").pack(side=tk.LEFT, padx=6)
+                tk.Button(btn_frame_mod, text="🗑 Supprimer sélection", command=supprimer_selection_mod, bg="#f44336", fg="white").pack(side=tk.LEFT, padx=6)
+                tk.Button(btn_frame_mod, text="✅ Valider & Fermer", command=fen_pieces.destroy, bg="#4CAF50", fg="white").pack(side=tk.RIGHT, padx=6)
+
+            # Button for managing pieces (visible)
+            btn_pieces_mod = tk.Button(main_frame_m, text="🧾 Gérer pièces utilisées", bg="#9C27B0", fg="white",
+                                       command=gerer_pieces_modifiees)
+            btn_pieces_mod.grid(row=6, column=0, pady=10)
+
+            # Pieces label
+            lbl_pieces_info_mod = tk.Label(main_frame_m, text="", anchor="w")
+            lbl_pieces_info_mod.grid(row=6, column=1, sticky="w")
+
+            def update_pieces_label_mod():
+                if not pieces_selectionnees_mod:
+                    lbl_pieces_info_mod.config(text="Aucune pièce sélectionnée")
+                else:
+                    s = ", ".join([f"{p['nom']} x{p['quantite']}" for p in pieces_selectionnees_mod])
+                    lbl_pieces_info_mod.config(text=s[:80] + ("..." if len(s) > 80 else ""))
+
+            # Initialize pieces label
+            update_pieces_label_mod()
+
+            # Refresh label when window regains focus
+            def on_focus_mod(event=None):
+                update_pieces_label_mod()
+            fen_mod.bind("<FocusIn>", on_focus_mod)
+
+            def sauvegarder_modification():
+                date_entree = entry_date_entree.get().strip()
+                date_sortie = entry_date_sortie.get().strip()
+                technicien = entry_technicien.get().strip()
+                cout_main_text = entry_cout_main.get().strip()
+                details = text_details.get("1.0", tk.END).strip()
+                if not date_entree:
+                    messagebox.showwarning("Attention", "Date d'entrée obligatoire")
+                    return
+                try:
+                    cout_main = float(cout_main_text) if cout_main_text else 0.0
+                except ValueError:
+                    messagebox.showwarning("Attention", "Coût principal invalide")
+                    return
+                
+                # Calculate total parts cost
+                total_pieces_cost = sum(p['cout_total'] for p in pieces_selectionnees_mod)
+                cout_total_interv = round(cout_main + total_pieces_cost, 2)
+                
+                # Check stock sufficiency
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                
+                # Get original quantities to adjust stock correctly
+                c.execute("SELECT piece_id, quantite_utilisee FROM intervention_pieces WHERE intervention_id=?", (intervention_id,))
+                original_pieces = c.fetchall()
+                original_dict = {piece_id: qte for piece_id, qte in original_pieces}
+                
+                # Check stock for new quantities
+                for p in pieces_selectionnees_mod:
+                    piece_id = p['piece_id']
+                    new_qte = p['quantite']
+                    # Get current stock
+                    c.execute("SELECT quantite_stock FROM pieces WHERE id=?", (piece_id,))
+                    row = c.fetchone()
+                    if not row:
+                        conn.close()
+                        messagebox.showerror("Erreur", f"La pièce {p['nom']} n'existe plus.")
+                        return
+                    stock = row[0]
+                    
+                    # Calculate stock change:
+                    old_qte = original_dict.get(piece_id, 0)
+                    stock_change = new_qte - old_qte
+                    
+                    if stock < stock_change:
+                        conn.close()
+                        messagebox.showerror("Erreur", f"Stock insuffisant pour {p['nom']} (stock: {stock}, demandé: {stock_change}).")
+                        return
+                
+                # Update intervention
+                c.execute('''UPDATE interventions SET date_entree=?, date_sortie=?, technicien=?, cout=?, details_reparation=? 
+                             WHERE id=?''', (date_entree, date_sortie, technicien, cout_total_interv, details, intervention_id))
+                
+                # Remove old intervention_pieces entries
+                c.execute("DELETE FROM intervention_pieces WHERE intervention_id=?", (intervention_id,))
+                
+                # Add new intervention_pieces entries and update stock
+                for p in pieces_selectionnees_mod:
+                    piece_id = p['piece_id']
+                    qte = p['quantite']
+                    prix = p['prix']
+                    cout_total = round(prix * qte, 2)
+                    c.execute('''INSERT INTO intervention_pieces (intervention_id, piece_id, quantite_utilisee, cout_total)
+                                 VALUES (?, ?, ?, ?)''', (intervention_id, piece_id, qte, cout_total))
+                
+                # Adjust stock levels
+                for p in pieces_selectionnees_mod:
+                    piece_id = p['piece_id']
+                    new_qte = p['quantite']
+                    old_qte = original_dict.get(piece_id, 0)
+                    stock_change = new_qte - old_qte
+                    if stock_change != 0:
+                        c.execute("UPDATE pieces SET quantite_stock = quantite_stock - ? WHERE id=?", (stock_change, piece_id))
+                
+                conn.commit()
+                conn.close()
+                messagebox.showinfo("Succès", f"Intervention modifiée.\nCoût total = {cout_total_interv:.2f}")
+                fen_mod.destroy()
+                rafraichir_tableau()
+                
+                # Check for low stock after modification
+                check_low_stock_and_alert()
+
+            tk.Button(main_frame_m, text="Sauvegarder", command=sauvegarder_modification, font=("Arial", 10), bg="#4CAF50", fg="white").grid(row=7, column=0, pady=10)
+            tk.Button(main_frame_m, text="Annuler", command=fen_mod.destroy, font=("Arial", 10), bg="#f44336", fg="white").grid(row=7, column=1, pady=10)
+
+        # === BUTTON FRAME WITH NEW MODIFIER BUTTON ===
         btn_frame = tk.Frame(main_repair_frame)
         btn_frame.pack(fill=tk.X, pady=10)
         tk.Button(btn_frame, text="➕ Ajouter Intervention", command=ajouter_intervention, font=("Arial", 10), bg="#2196F3", fg="white").pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="👁 Voir Détail", command=voir_detail_intervention, font=("Arial", 10), bg="#9C27B0", fg="white").pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="✏️ Modifier", command=modifier_intervention, font=("Arial", 10), bg="#FFC107").pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="🔄 Rafraîchir", command=rafraichir_tableau, font=("Arial", 10), bg="#FF9800", fg="white").pack(side=tk.LEFT, padx=5)
 
         rafraichir_tableau()
