@@ -6,12 +6,45 @@ import os
 from datetime import datetime, timedelta
 import threading
 import time
+from functools import partial
+
+# === Global Variables ===
+root = None
+entry_serial = None
 
 # === Configuration ===
 KEY_FILE = 'secret.key'
 DB_FILE = 'gmao_encrypted.db'
 INITIAL_PASSWORD = 'admin123'
 LOW_STOCK_THRESHOLD = 5
+
+# === Window Manager ===
+class WindowManager:
+    def __init__(self):
+        self.windows = {}
+    
+    def open_window(self, window_name, create_window_func, *args, **kwargs):
+        if window_name in self.windows and self.windows[window_name].winfo_exists():
+            # Window already exists, bring it to focus
+            self.windows[window_name].lift()
+            self.windows[window_name].focus_force()
+            return self.windows[window_name]
+        else:
+            # Create new window
+            window = create_window_func(*args, **kwargs)
+            self.windows[window_name] = window
+            
+            # Clean up when window is closed
+            def on_close():
+                if window_name in self.windows:
+                    del self.windows[window_name]
+                window.destroy()
+            
+            window.protocol("WM_DELETE_WINDOW", on_close)
+            return window
+
+# Create a global window manager instance
+window_manager = WindowManager()
 
 # === Professional UI Theme ===
 class ProfessionalTheme:
@@ -283,6 +316,8 @@ def check_reminders(root):
 
 # === Main GMAO Interface ===
 def open_gmao_interface():
+    global root, entry_serial
+    
     # Main application window
     root = tk.Tk()
     root.title("🔧 Système GMAO - Gestion de Maintenance Assistée par Ordinateur")
@@ -325,9 +360,33 @@ def open_gmao_interface():
     entry_serial.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
     entry_serial.focus()
     
-    # Define all functions before they are referenced
+    # Stock Management Button
+    stock_button_frame = tk.Frame(main_container, bg=ProfessionalTheme.LIGHT)
+    stock_button_frame.pack(fill=tk.X, pady=(0, 20))
     
-    def open_parts_management():
+    ttk.Button(stock_button_frame, text="📦 Gestion des Pièces de Rechange", 
+              command=open_parts_management, style="Warning.TButton").pack(fill=tk.X)
+    
+    # Footer
+    footer_frame = tk.Frame(root, bg=ProfessionalTheme.PRIMARY, height=40)
+    footer_frame.pack(fill=tk.X, side=tk.BOTTOM)
+    footer_frame.pack_propagate(False)
+    
+    tk.Label(footer_frame, text="Système GMAO v1.0 | Tous droits réservés", 
+             font=ProfessionalTheme.BODY_FONT, bg=ProfessionalTheme.PRIMARY, 
+             fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=10)
+    
+    # Handle Enter key in search field
+    entry_serial.bind('<Return>', lambda event: search_equipment())
+    
+    # Initialize reminder system
+    check_reminders(root)
+    
+    # Run main loop
+    root.mainloop()
+
+def open_parts_management():
+    def create_stock_window():
         stock_window = tk.Toplevel(root)
         stock_window.title("📦 Gestion des pièces de rechange")
         stock_window.geometry("1200x700")
@@ -603,56 +662,34 @@ def open_gmao_interface():
         
         refresh_stock()
         check_low_stock()  # Initial check
+        
+        return stock_window
     
-    # Main search functionality
-    def search_equipment():
-        serial_number = entry_serial.get().strip()
-        if not serial_number:
-            messagebox.showwarning("Attention", "Veuillez saisir un numéro de série")
-            return
-        
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        c.execute("SELECT * FROM equipements WHERE numero_serie=?", (serial_number,))
-        result = c.fetchone()
-        conn.close()
-        
-        if not result:
-            create_equipment_form(serial_number)
-        else:
-            show_equipment_history(result[0], serial_number)
+    # Use the window manager to open/create the window
+    return window_manager.open_window("parts_management", create_stock_window)
+
+# Main search functionality
+def search_equipment():
+    global entry_serial
     
-    def create_equipment_form(serial_number):
-        def save_equipment():
-            brand = entry_brand.get().strip()
-            model = entry_model.get().strip()
-            purchase_date = entry_purchase_date.get().strip()
-            sale_date = entry_sale_date.get().strip()
-            buyer_id = entry_buyer.get().strip()
-            notes = text_notes.get("1.0", tk.END).strip()
-            
-            if not brand or not model:
-                messagebox.showwarning("Attention", "Marque et Modèle sont obligatoires")
-                return
-            
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            try:
-                c.execute('''INSERT INTO equipements 
-                          (numero_serie, marque, modele, date_achat, date_vente, identifiant_acheteur, notes) 
-                          VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                          (serial_number, brand, model, purchase_date, sale_date, buyer_id, notes))
-                conn.commit()
-                messagebox.showinfo("Succès", "Équipement enregistré avec succès!")
-                form_window.destroy()
-                c.execute("SELECT id FROM equipements WHERE numero_serie=?", (serial_number,))
-                equipement_id = c.fetchone()[0]
-                show_equipment_history(equipement_id, serial_number)
-            except sqlite3.IntegrityError:
-                messagebox.showerror("Erreur", "Numéro de série déjà existant")
-            finally:
-                conn.close()
-        
+    serial_number = entry_serial.get().strip()
+    if not serial_number:
+        messagebox.showwarning("Attention", "Veuillez saisir un numéro de série")
+        return
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT * FROM equipements WHERE numero_serie=?", (serial_number,))
+    result = c.fetchone()
+    conn.close()
+    
+    if not result:
+        create_equipment_form(serial_number)
+    else:
+        show_equipment_history(result[0], serial_number)
+
+def create_equipment_form(serial_number):
+    def create_form_window():
         form_window = tk.Toplevel(root)
         form_window.title(f"Nouvel Équipement - {serial_number}")
         form_window.geometry("600x700")
@@ -718,6 +755,36 @@ def open_gmao_interface():
                             bd=1, relief="solid", highlightthickness=0, height=8)
         text_notes.grid(row=6, column=1, padx=20, pady=12, sticky="ew")
         
+        def save_equipment():
+            brand = entry_brand.get().strip()
+            model = entry_model.get().strip()
+            purchase_date = entry_purchase_date.get().strip()
+            sale_date = entry_sale_date.get().strip()
+            buyer_id = entry_buyer.get().strip()
+            notes = text_notes.get("1.0", tk.END).strip()
+            
+            if not brand or not model:
+                messagebox.showwarning("Attention", "Marque et Modèle sont obligatoires")
+                return
+            
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            try:
+                c.execute('''INSERT INTO equipements 
+                          (numero_serie, marque, modele, date_achat, date_vente, identifiant_acheteur, notes) 
+                          VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                          (serial_number, brand, model, purchase_date, sale_date, buyer_id, notes))
+                conn.commit()
+                messagebox.showinfo("Succès", "Équipement enregistré avec succès!")
+                form_window.destroy()
+                c.execute("SELECT id FROM equipements WHERE numero_serie=?", (serial_number,))
+                equipement_id = c.fetchone()[0]
+                show_equipment_history(equipement_id, serial_number)
+            except sqlite3.IntegrityError:
+                messagebox.showerror("Erreur", "Numéro de série déjà existant")
+            finally:
+                conn.close()
+        
         button_frame = tk.Frame(form_container, bg=ProfessionalTheme.WHITE)
         button_frame.grid(row=7, column=0, columnspan=2, pady=20)
         
@@ -728,9 +795,15 @@ def open_gmao_interface():
         
         form_container.columnconfigure(1, weight=1)
         entry_brand.focus()
+        
+        return form_window
     
-    # Maintenance history display
-    def show_equipment_history(equipment_id, serial_number):
+    # Use the window manager to open/create the window
+    return window_manager.open_window(f"equipment_form_{serial_number}", create_form_window)
+
+# Maintenance history display
+def show_equipment_history(equipment_id, serial_number):
+    def create_history_window():
         history_window = tk.Toplevel(root)
         history_window.title(f"Historique - {serial_number}")
         history_window.geometry("1200x800")
@@ -825,13 +898,21 @@ def open_gmao_interface():
         selected_pieces = []  # List of dicts: {'piece_id':.., 'name':.., 'price':.., 'qty':.., 'total_cost':..}
         
         def manage_used_pieces(parent_window):
-            """Opens window for selecting pieces and quantities.
-               Stores selections in selected_pieces list."""
-            nonlocal selected_pieces
+            # Check if a pieces window for this parent already exists
+            for child in parent_window.winfo_children():
+                if isinstance(child, tk.Toplevel) and hasattr(child, 'pieces_selection'):
+                    child.lift()
+                    child.focus_force()
+                    return
+            
+            # Create new window
             pieces_window = tk.Toplevel(parent_window)
             pieces_window.title("Associer des pièces à l'intervention")
             pieces_window.geometry("900x500")
             pieces_window.configure(bg=ProfessionalTheme.LIGHT)
+            
+            # Add a custom attribute to identify this window type
+            pieces_window.pieces_selection = True
             
             # Header
             header_frame = tk.Frame(pieces_window, bg=ProfessionalTheme.PRIMARY, height=50)
@@ -945,7 +1026,7 @@ def open_gmao_interface():
                 piece_id = int(values[0])
                 tree_right.delete(selected[0])
                 
-                # Remove from selected_pieces list (CORRECTION: PAS de restauration automatique du stock)
+                # Remove from selected_pieces list
                 nonlocal selected_pieces
                 selected_pieces = [p for p in selected_pieces if p['piece_id'] != piece_id]
                 # Refresh stock in left panel
@@ -971,7 +1052,7 @@ def open_gmao_interface():
                 if valid:
                     pieces_window.destroy()
             
-            # Middle button container - FIXED
+            # Middle button container
             middle_container = tk.Frame(main_container, bg=ProfessionalTheme.LIGHT)
             middle_container.pack(side=tk.LEFT, fill=tk.Y, padx=10)
             
@@ -983,7 +1064,7 @@ def open_gmao_interface():
             ttk.Button(middle_container, text="← Retirer", command=remove_from_intervention, 
                       style="Danger.TButton").pack(pady=5)
             
-            # Bottom button container - FIXED
+            # Bottom button container
             bottom_container = tk.Frame(pieces_window, bg=ProfessionalTheme.LIGHT)
             bottom_container.pack(fill=tk.X, padx=20, pady=(0, 20))
             
@@ -1002,227 +1083,243 @@ def open_gmao_interface():
             values = tree.item(selected[0], 'values')
             intervention_id = values[0]
             
-            details_window = tk.Toplevel(history_window)
-            details_window.title(f"Détails de l'intervention #{intervention_id}")
-            details_window.geometry("700x500")
-            details_window.configure(bg=ProfessionalTheme.LIGHT)
+            # Check if details window already exists
+            if f"intervention_details_{intervention_id}" in window_manager.windows:
+                window_manager.windows[f"intervention_details_{intervention_id}"].lift()
+                window_manager.windows[f"intervention_details_{intervention_id}"].focus_force()
+                return
             
-            # Header
-            header_frame = tk.Frame(details_window, bg=ProfessionalTheme.PRIMARY, height=50)
-            header_frame.pack(fill=tk.X)
-            header_frame.pack_propagate(False)
-            
-            tk.Label(header_frame, text=f"Détails de l'intervention #{intervention_id}", 
-                    font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
-                    fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
-            
-            # Details container
-            details_container = tk.Frame(details_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
-            details_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-            
-            # Load intervention data
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            c.execute('''SELECT date_entree, date_sortie, technicien, cout, details_reparation 
-                         FROM interventions WHERE id=?''', (intervention_id,))
-            intervention = c.fetchone()
-            
-            # Load associated pieces
-            c.execute('''SELECT p.nom, ip.quantite_utilisee, p.prix_unitaire, ip.cout_total
-                         FROM intervention_pieces ip
-                         JOIN pieces p ON ip.piece_id = p.id
-                         WHERE ip.intervention_id=?''', (intervention_id,))
-            pieces = c.fetchall()
-            conn.close()
-            
-            # Display intervention details
-            basic_info = [
-                ("Date d'entrée:", intervention[0]),
-                ("Date de sortie:", intervention[1] or "N/A"),
-                ("Technicien:", intervention[2] or "N/A"),
-                ("Coût total:", f"{intervention[3]:.2f} €")
-            ]
-            
-            for i, (label, value) in enumerate(basic_info):
-                tk.Label(details_container, text=label, font=ProfessionalTheme.SUBTITLE_FONT, 
+            def create_details_window():
+                details_window = tk.Toplevel(history_window)
+                details_window.title(f"Détails de l'intervention #{intervention_id}")
+                details_window.geometry("700x500")
+                details_window.configure(bg=ProfessionalTheme.LIGHT)
+                
+                # Header
+                header_frame = tk.Frame(details_window, bg=ProfessionalTheme.PRIMARY, height=50)
+                header_frame.pack(fill=tk.X)
+                header_frame.pack_propagate(False)
+                
+                tk.Label(header_frame, text=f"Détails de l'intervention #{intervention_id}", 
+                        font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
+                        fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
+                
+                # Details container
+                details_container = tk.Frame(details_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
+                details_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+                
+                # Load intervention data
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                c.execute('''SELECT date_entree, date_sortie, technicien, cout, details_reparation 
+                             FROM interventions WHERE id=?''', (intervention_id,))
+                intervention = c.fetchone()
+                
+                # Load associated pieces
+                c.execute('''SELECT p.nom, ip.quantite_utilisee, p.prix_unitaire, ip.cout_total
+                             FROM intervention_pieces ip
+                             JOIN pieces p ON ip.piece_id = p.id
+                             WHERE ip.intervention_id=?''', (intervention_id,))
+                pieces = c.fetchall()
+                conn.close()
+                
+                # Display intervention details
+                basic_info = [
+                    ("Date d'entrée:", intervention[0]),
+                    ("Date de sortie:", intervention[1] or "N/A"),
+                    ("Technicien:", intervention[2] or "N/A"),
+                    ("Coût total:", f"{intervention[3]:.2f} €")
+                ]
+                
+                for i, (label, value) in enumerate(basic_info):
+                    tk.Label(details_container, text=label, font=ProfessionalTheme.SUBTITLE_FONT, 
+                            bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY, 
+                            anchor="w").grid(row=i, column=0, sticky="w", pady=10, padx=20)
+                    tk.Label(details_container, text=value, font=ProfessionalTheme.BODY_FONT, 
+                            bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK, 
+                            anchor="w").grid(row=i, column=1, sticky="w", pady=10, padx=(20, 20))
+                
+                # Details section
+                tk.Label(details_container, text="Détails:", font=ProfessionalTheme.SUBTITLE_FONT, 
                         bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY, 
-                        anchor="w").grid(row=i, column=0, sticky="w", pady=10, padx=20)
-                tk.Label(details_container, text=value, font=ProfessionalTheme.BODY_FONT, 
-                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK, 
-                        anchor="w").grid(row=i, column=1, sticky="w", pady=10, padx=(20, 20))
-            
-            # Details section
-            tk.Label(details_container, text="Détails:", font=ProfessionalTheme.SUBTITLE_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY, 
-                    anchor="nw").grid(row=4, column=0, sticky="nw", pady=10, padx=20)
-            details_text = tk.Text(details_container, font=ProfessionalTheme.BODY_FONT, 
-                                  width=50, height=6, wrap=tk.WORD, bd=1, relief="solid", 
-                                  highlightthickness=0)
-            details_text.grid(row=4, column=1, pady=10, padx=(20, 20))
-            details_text.insert("1.0", intervention[4] or "")
-            details_text.config(state=tk.DISABLED)
-            
-            # Pieces section
-            if pieces:
-                tk.Label(details_container, text="Pièces utilisées:", font=ProfessionalTheme.SUBTITLE_FONT, 
-                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY, 
-                        anchor="w").grid(row=5, column=0, sticky="w", pady=10, padx=20)
+                        anchor="nw").grid(row=4, column=0, sticky="nw", pady=10, padx=20)
+                details_text = tk.Text(details_container, font=ProfessionalTheme.BODY_FONT, 
+                                      width=50, height=6, wrap=tk.WORD, bd=1, relief="solid", 
+                                      highlightthickness=0)
+                details_text.grid(row=4, column=1, pady=10, padx=(20, 20))
+                details_text.insert("1.0", intervention[4] or "")
+                details_text.config(state=tk.DISABLED)
                 
-                # Pieces table
-                pieces_frame = tk.Frame(details_container, bg=ProfessionalTheme.WHITE)
-                pieces_frame.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 20), padx=20)
+                # Pieces section
+                if pieces:
+                    tk.Label(details_container, text="Pièces utilisées:", font=ProfessionalTheme.SUBTITLE_FONT, 
+                            bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY, 
+                            anchor="w").grid(row=5, column=0, sticky="w", pady=10, padx=20)
+                    
+                    # Pieces table
+                    pieces_frame = tk.Frame(details_container, bg=ProfessionalTheme.WHITE)
+                    pieces_frame.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 20), padx=20)
+                    
+                    pieces_cols = ("Nom", "Quantité", "Prix unitaire", "Coût total")
+                    pieces_tree = ttk.Treeview(pieces_frame, columns=pieces_cols, show="headings", height=6)
+                    for col in pieces_cols:
+                        pieces_tree.heading(col, text=col)
+                        pieces_tree.column(col, width=120)
+                    pieces_tree.pack(fill=tk.BOTH, expand=True)
+                    
+                    for piece in pieces:
+                        pieces_tree.insert("", tk.END, values=piece)
                 
-                pieces_cols = ("Nom", "Quantité", "Prix unitaire", "Coût total")
-                pieces_tree = ttk.Treeview(pieces_frame, columns=pieces_cols, show="headings", height=6)
-                for col in pieces_cols:
-                    pieces_tree.heading(col, text=col)
-                    pieces_tree.column(col, width=120)
-                pieces_tree.pack(fill=tk.BOTH, expand=True)
+                details_container.columnconfigure(1, weight=1)
                 
-                for piece in pieces:
-                    pieces_tree.insert("", tk.END, values=piece)
+                return details_window
             
-            details_container.columnconfigure(1, weight=1)
+            window_manager.open_window(f"intervention_details_{intervention_id}", create_details_window)
         
         def add_intervention():
             nonlocal selected_pieces
             selected_pieces = []  # Reset selections
             
-            add_window = tk.Toplevel(history_window)
-            add_window.title("Ajouter une intervention")
-            add_window.geometry("600x600")
-            add_window.configure(bg=ProfessionalTheme.LIGHT)
-            
-            # Header
-            header_frame = tk.Frame(add_window, bg=ProfessionalTheme.PRIMARY, height=50)
-            header_frame.pack(fill=tk.X)
-            header_frame.pack_propagate(False)
-            
-            tk.Label(header_frame, text="Ajouter une intervention", 
-                    font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
-                    fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
-            
-            # Form container
-            form_container = tk.Frame(add_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
-            form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-            
-            # Form fields
-            tk.Label(form_container, text="Date d'entrée *:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=0, column=0, sticky="w", padx=20, pady=12)
-            entry_date_in = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
-                                   bd=1, relief="solid", highlightthickness=0)
-            entry_date_in.grid(row=0, column=1, padx=20, pady=12, sticky="ew")
-            entry_date_in.insert(0, datetime.now().strftime("%Y-%m-%d"))
-            
-            tk.Label(form_container, text="Date de sortie:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=1, column=0, sticky="w", padx=20, pady=12)
-            entry_date_out = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
-                                    bd=1, relief="solid", highlightthickness=0)
-            entry_date_out.grid(row=1, column=1, padx=20, pady=12, sticky="ew")
-            
-            tk.Label(form_container, text="Technicien:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=2, column=0, sticky="w", padx=20, pady=12)
-            entry_technician = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
-                                      bd=1, relief="solid", highlightthickness=0)
-            entry_technician.grid(row=2, column=1, padx=20, pady=12, sticky="ew")
-            
-            tk.Label(form_container, text="Coût:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=3, column=0, sticky="w", padx=20, pady=12)
-            entry_cost = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
-                                 bd=1, relief="solid", highlightthickness=0)
-            entry_cost.grid(row=3, column=1, padx=20, pady=12, sticky="ew")
-            
-            tk.Label(form_container, text="Détails:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=4, column=0, sticky="nw", padx=20, pady=12)
-            text_details = tk.Text(form_container, font=ProfessionalTheme.BODY_FONT, 
-                                 bd=1, relief="solid", highlightthickness=0, height=6)
-            text_details.grid(row=4, column=1, padx=20, pady=12, sticky="ew")
-            
-            def save_intervention():
-                date_in = entry_date_in.get().strip()
-                date_out = entry_date_out.get().strip()
-                technician = entry_technician.get().strip()
-                cost_str = entry_cost.get().strip()
-                details = text_details.get("1.0", tk.END).strip()
+            def create_add_window():
+                add_window = tk.Toplevel(history_window)
+                add_window.title("Ajouter une intervention")
+                add_window.geometry("600x600")
+                add_window.configure(bg=ProfessionalTheme.LIGHT)
                 
-                # Validate required fields
-                if not date_in:
-                    messagebox.showwarning("Attention", "Date d'entrée obligatoire")
-                    return
+                # Header
+                header_frame = tk.Frame(add_window, bg=ProfessionalTheme.PRIMARY, height=50)
+                header_frame.pack(fill=tk.X)
+                header_frame.pack_propagate(False)
                 
-                try:
-                    cost = float(cost_str) if cost_str else 0.0
-                except ValueError:
-                    messagebox.showwarning("Erreur", "Coût invalide")
-                    return
+                tk.Label(header_frame, text="Ajouter une intervention", 
+                        font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
+                        fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
                 
-                # Validate dates
-                try:
-                    datetime.strptime(date_in, "%Y-%m-%d")
-                    if date_out:
-                        datetime.strptime(date_out, "%Y-%m-%d")
-                except ValueError:
-                    messagebox.showwarning("Erreur", "Format de date invalide (YYYY-MM-DD)")
-                    return
+                # Form container
+                form_container = tk.Frame(add_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
+                form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
                 
-                # Save intervention to database
-                conn = sqlite3.connect(DB_FILE)
-                c = conn.cursor()
-                c.execute('''INSERT INTO interventions 
-                          (equipement_id, date_entree, date_sortie, details_reparation, technicien, cout) 
-                          VALUES (?, ?, ?, ?, ?, ?)''',
-                          (equipment_id, date_in, date_out, details, technician, cost))
-                intervention_id = c.lastrowid
-                conn.commit()
+                # Form fields
+                tk.Label(form_container, text="Date d'entrée *:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=0, column=0, sticky="w", padx=20, pady=12)
+                entry_date_in = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                       bd=1, relief="solid", highlightthickness=0)
+                entry_date_in.grid(row=0, column=1, padx=20, pady=12, sticky="ew")
+                entry_date_in.insert(0, datetime.now().strftime("%Y-%m-%d"))
                 
-                # Save pieces usage if any
-                total_pieces_cost = 0
-                if selected_pieces:
-                    for piece in selected_pieces:
-                        # Save piece usage
-                        c.execute('''INSERT INTO intervention_pieces 
-                                  (intervention_id, piece_id, quantite_utilisee, cout_total) 
-                                  VALUES (?, ?, ?, ?)''',
-                                  (intervention_id, piece['piece_id'], piece['qty'], piece['total_cost']))
-                        
-                        # Update stock
-                        c.execute("SELECT quantite_stock FROM pieces WHERE id=?", (piece['piece_id'],))
-                        current_stock = c.fetchone()[0]
-                        new_stock = current_stock - piece['qty']
-                        c.execute("UPDATE pieces SET quantite_stock=? WHERE id=?", 
-                                 (new_stock, piece['piece_id']))
+                tk.Label(form_container, text="Date de sortie:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=1, column=0, sticky="w", padx=20, pady=12)
+                entry_date_out = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                        bd=1, relief="solid", highlightthickness=0)
+                entry_date_out.grid(row=1, column=1, padx=20, pady=12, sticky="ew")
+                
+                tk.Label(form_container, text="Technicien:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=2, column=0, sticky="w", padx=20, pady=12)
+                entry_technician = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                          bd=1, relief="solid", highlightthickness=0)
+                entry_technician.grid(row=2, column=1, padx=20, pady=12, sticky="ew")
+                
+                tk.Label(form_container, text="Coût:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=3, column=0, sticky="w", padx=20, pady=12)
+                entry_cost = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                     bd=1, relief="solid", highlightthickness=0)
+                entry_cost.grid(row=3, column=1, padx=20, pady=12, sticky="ew")
+                
+                tk.Label(form_container, text="Détails:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=4, column=0, sticky="nw", padx=20, pady=12)
+                text_details = tk.Text(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                     bd=1, relief="solid", highlightthickness=0, height=6)
+                text_details.grid(row=4, column=1, padx=20, pady=12, sticky="ew")
+                
+                def save_intervention():
+                    date_in = entry_date_in.get().strip()
+                    date_out = entry_date_out.get().strip()
+                    technician = entry_technician.get().strip()
+                    cost_str = entry_cost.get().strip()
+                    details = text_details.get("1.0", tk.END).strip()
                     
-                    # Update intervention cost
-                    total_cost = cost + total_pieces_cost
-                    c.execute("UPDATE interventions SET cout=? WHERE id=?", (total_cost, intervention_id))
+                    # Validate required fields
+                    if not date_in:
+                        messagebox.showwarning("Attention", "Date d'entrée obligatoire")
+                        return
+                    
+                    try:
+                        cost = float(cost_str) if cost_str else 0.0
+                    except ValueError:
+                        messagebox.showwarning("Erreur", "Coût invalide")
+                        return
+                    
+                    # Validate dates
+                    try:
+                        datetime.strptime(date_in, "%Y-%m-%d")
+                        if date_out:
+                            datetime.strptime(date_out, "%Y-%m-%d")
+                    except ValueError:
+                        messagebox.showwarning("Erreur", "Format de date invalide (YYYY-MM-DD)")
+                        return
+                    
+                    # Save intervention to database
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
+                    c.execute('''INSERT INTO interventions 
+                              (equipement_id, date_entree, date_sortie, details_reparation, technicien, cout) 
+                              VALUES (?, ?, ?, ?, ?, ?)''',
+                              (equipment_id, date_in, date_out, details, technician, cost))
+                    intervention_id = c.lastrowid
+                    conn.commit()
+                    
+                    # Save pieces usage if any
+                    total_pieces_cost = 0
+                    if selected_pieces:
+                        for piece in selected_pieces:
+                            # Save piece usage
+                            c.execute('''INSERT INTO intervention_pieces 
+                                      (intervention_id, piece_id, quantite_utilisee, cout_total) 
+                                      VALUES (?, ?, ?, ?)''',
+                                      (intervention_id, piece['piece_id'], piece['qty'], piece['total_cost']))
+                            
+                            # Update stock
+                            c.execute("SELECT quantite_stock FROM pieces WHERE id=?", (piece['piece_id'],))
+                            current_stock = c.fetchone()[0]
+                            new_stock = current_stock - piece['qty']
+                            c.execute("UPDATE pieces SET quantite_stock=? WHERE id=?", 
+                                     (new_stock, piece['piece_id']))
+                        
+                        # Update intervention cost
+                        total_cost = cost + sum(p['total_cost'] for p in selected_pieces)
+                        c.execute("UPDATE interventions SET cout=? WHERE id=?", (total_cost, intervention_id))
+                    
+                    conn.commit()
+                    conn.close()
+                    
+                    messagebox.showinfo("Succès", "Intervention enregistrée avec succès!")
+                    add_window.destroy()
+                    refresh_interventions()
                 
-                conn.commit()
-                conn.close()
+                # Buttons
+                button_frame = tk.Frame(form_container, bg=ProfessionalTheme.WHITE)
+                button_frame.grid(row=5, column=0, columnspan=2, pady=20)
                 
-                messagebox.showinfo("Succès", "Intervention enregistrée avec succès!")
-                add_window.destroy()
-                refresh_interventions()
+                ttk.Button(button_frame, text="Sélectionner pièces", 
+                          command=lambda: manage_used_pieces(add_window), 
+                          style="Warning.TButton").pack(side=tk.LEFT, padx=(0, 10))
+                ttk.Button(button_frame, text="Sauvegarder", 
+                          command=save_intervention, 
+                          style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
+                ttk.Button(button_frame, text="Annuler", 
+                          command=add_window.destroy, 
+                          style="Danger.TButton").pack(side=tk.LEFT)
+                
+                form_container.columnconfigure(1, weight=1)
+                
+                return add_window
             
-            # Buttons
-            button_frame = tk.Frame(form_container, bg=ProfessionalTheme.WHITE)
-            button_frame.grid(row=5, column=0, columnspan=2, pady=20)
-            
-            ttk.Button(button_frame, text="Sélectionner pièces", 
-                      command=lambda: manage_used_pieces(add_window), 
-                      style="Warning.TButton").pack(side=tk.LEFT, padx=(0, 10))
-            ttk.Button(button_frame, text="Sauvegarder", 
-                      command=save_intervention, 
-                      style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
-            ttk.Button(button_frame, text="Annuler", 
-                      command=add_window.destroy, 
-                      style="Danger.TButton").pack(side=tk.LEFT)
-            
-            form_container.columnconfigure(1, weight=1)
+            window_manager.open_window(f"add_intervention_{equipment_id}", create_add_window)
         
         def edit_intervention():
             selected = tree.selection()
@@ -1233,344 +1330,356 @@ def open_gmao_interface():
             values = tree.item(selected[0], 'values')
             intervention_id = values[0]
             
-            edit_window = tk.Toplevel(history_window)
-            edit_window.title("Modifier une intervention")
-            edit_window.geometry("600x600")
-            edit_window.configure(bg=ProfessionalTheme.LIGHT)
-            
-            # Header
-            header_frame = tk.Frame(edit_window, bg=ProfessionalTheme.PRIMARY, height=50)
-            header_frame.pack(fill=tk.X)
-            header_frame.pack_propagate(False)
-            
-            tk.Label(header_frame, text="Modifier une intervention", 
-                    font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
-                    fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
-            
-            # Form container
-            form_container = tk.Frame(edit_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
-            form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-            
-            # Load intervention data
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            c.execute('''SELECT date_entree, date_sortie, technicien, cout, details_reparation 
-                         FROM interventions WHERE id=?''', (intervention_id,))
-            intervention = c.fetchone()
-            
-            # Load original piece associations
-            c.execute('''SELECT ip.piece_id, p.nom, ip.quantite_utilisee, p.prix_unitaire, ip.cout_total
-                         FROM intervention_pieces ip
-                         JOIN pieces p ON ip.piece_id = p.id
-                         WHERE ip.intervention_id=?''', (intervention_id,))
-            original_pieces = c.fetchall()
-            conn.close()
-            
-            # CORRECTION: NE PAS restaurer automatiquement le stock au début
-            # Le stock sera géré uniquement lors de la sauvegarde
-            
-            # Form fields
-            tk.Label(form_container, text="Date d'entrée *:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=0, column=0, sticky="w", padx=20, pady=12)
-            entry_date_in = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
-                                   bd=1, relief="solid", highlightthickness=0)
-            entry_date_in.grid(row=0, column=1, padx=20, pady=12, sticky="ew")
-            entry_date_in.insert(0, intervention[0] or "")
-            
-            tk.Label(form_container, text="Date de sortie:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=1, column=0, sticky="w", padx=20, pady=12)
-            entry_date_out = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
-                                    bd=1, relief="solid", highlightthickness=0)
-            entry_date_out.grid(row=1, column=1, padx=20, pady=12, sticky="ew")
-            entry_date_out.insert(0, intervention[1] or "")
-            
-            tk.Label(form_container, text="Technicien:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=2, column=0, sticky="w", padx=20, pady=12)
-            entry_technician = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
-                                      bd=1, relief="solid", highlightthickness=0)
-            entry_technician.grid(row=2, column=1, padx=20, pady=12, sticky="ew")
-            entry_technician.insert(0, intervention[2] or "")
-            
-            tk.Label(form_container, text="Coût:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=3, column=0, sticky="w", padx=20, pady=12)
-            entry_cost = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
-                                 bd=1, relief="solid", highlightthickness=0)
-            entry_cost.grid(row=3, column=1, padx=20, pady=12, sticky="ew")
-            entry_cost.insert(0, intervention[3] or "")
-            
-            tk.Label(form_container, text="Détails:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=4, column=0, sticky="nw", padx=20, pady=12)
-            text_details = tk.Text(form_container, font=ProfessionalTheme.BODY_FONT, 
-                                 bd=1, relief="solid", highlightthickness=0, height=6)
-            text_details.grid(row=4, column=1, padx=20, pady=12, sticky="ew")
-            text_details.insert("1.0", intervention[4] or "")
-            
-            # Initialize selected_pieces with original pieces
-            selected_pieces = []
-            for piece in original_pieces:
-                piece_dict = {
-                    'piece_id': piece[0],
-                    'name': piece[1],
-                    'qty': piece[2],
-                    'price': piece[3],
-                    'total_cost': piece[4]
-                }
-                selected_pieces.append(piece_dict)
-            
-            def save_edits():
-                date_in = entry_date_in.get().strip()
-                date_out = entry_date_out.get().strip()
-                technician = entry_technician.get().strip()
-                cost_str = entry_cost.get().strip()
-                details = text_details.get("1.0", tk.END).strip()
+            def create_edit_window():
+                edit_window = tk.Toplevel(history_window)
+                edit_window.title("Modifier une intervention")
+                edit_window.geometry("600x600")
+                edit_window.configure(bg=ProfessionalTheme.LIGHT)
                 
-                # Validate required fields
-                if not date_in:
-                    messagebox.showwarning("Attention", "Date d'entrée obligatoire")
-                    return
+                # Header
+                header_frame = tk.Frame(edit_window, bg=ProfessionalTheme.PRIMARY, height=50)
+                header_frame.pack(fill=tk.X)
+                header_frame.pack_propagate(False)
                 
-                try:
-                    cost = float(cost_str) if cost_str else 0.0
-                except ValueError:
-                    messagebox.showwarning("Erreur", "Coût invalide")
-                    return
+                tk.Label(header_frame, text="Modifier une intervention", 
+                        font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
+                        fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
                 
-                # Validate dates
-                try:
-                    datetime.strptime(date_in, "%Y-%m-%d")
-                    if date_out:
-                        datetime.strptime(date_out, "%Y-%m-%d")
-                except ValueError:
-                    messagebox.showwarning("Erreur", "Format de date invalide (YYYY-MM-DD)")
-                    return
+                # Form container
+                form_container = tk.Frame(edit_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
+                form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
                 
-                # Save intervention changes to database
+                # Load intervention data
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
+                c.execute('''SELECT date_entree, date_sortie, technicien, cout, details_reparation 
+                             FROM interventions WHERE id=?''', (intervention_id,))
+                intervention = c.fetchone()
                 
-                # CORRECTION: Gérer le stock correctement
-                # 1. Restaurer le stock des pièces originales
-                for piece in original_pieces:
-                    c.execute("SELECT quantite_stock FROM pieces WHERE id=?", (piece[0],))
-                    current_stock = c.fetchone()[0]
-                    new_stock = current_stock + piece[2]  # Ajouter la quantité utilisée
-                    c.execute("UPDATE pieces SET quantite_stock=? WHERE id=?", (new_stock, piece[0]))
-                
-                # 2. Supprimer les associations originales
-                c.execute("DELETE FROM intervention_pieces WHERE intervention_id=?", (intervention_id,))
-                
-                # Update intervention
-                c.execute('''UPDATE interventions SET 
-                          date_entree=?, date_sortie=?, details_reparation=?, technicien=?, cout=? 
-                          WHERE id=?''',
-                          (date_in, date_out, details, technician, cost, intervention_id))
-                
-                # Save pieces usage if any
-                total_pieces_cost = 0
-                if selected_pieces:
-                    for piece in selected_pieces:
-                        # Save piece usage
-                        c.execute('''INSERT INTO intervention_pieces 
-                                  (intervention_id, piece_id, quantite_utilisee, cout_total) 
-                                  VALUES (?, ?, ?, ?)''',
-                                  (intervention_id, piece['piece_id'], piece['qty'], piece['total_cost']))
-                        
-                        # Deduct stock
-                        c.execute("SELECT quantite_stock FROM pieces WHERE id=?", (piece['piece_id'],))
-                        current_stock = c.fetchone()[0]
-                        new_stock = current_stock - piece['qty']
-                        c.execute("UPDATE pieces SET quantite_stock=? WHERE id=?", 
-                                 (new_stock, piece['piece_id']))
-                
-                conn.commit()
+                # Load original piece associations
+                c.execute('''SELECT ip.piece_id, p.nom, ip.quantite_utilisee, p.prix_unitaire, ip.cout_total
+                             FROM intervention_pieces ip
+                             JOIN pieces p ON ip.piece_id = p.id
+                             WHERE ip.intervention_id=?''', (intervention_id,))
+                original_pieces = c.fetchall()
                 conn.close()
                 
-                messagebox.showinfo("Succès", "Intervention modifiée avec succès!")
-                edit_window.destroy()
-                refresh_interventions()
-            
-            def manage_pieces():
-                def manage_used_pieces_edit(parent_window):
-                    pieces_window = tk.Toplevel(parent_window)
-                    pieces_window.title("Gérer les pièces utilisées")
-                    pieces_window.geometry("900x500")
-                    pieces_window.configure(bg=ProfessionalTheme.LIGHT)
-                    
-                    # Header
-                    header_frame = tk.Frame(pieces_window, bg=ProfessionalTheme.PRIMARY, height=50)
-                    header_frame.pack(fill=tk.X)
-                    header_frame.pack_propagate(False)
-                    
-                    tk.Label(header_frame, text="Gérer les pièces utilisées", 
-                            font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
-                            fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
-                    
-                    # Main container
-                    main_container = tk.Frame(pieces_window, bg=ProfessionalTheme.LIGHT)
-                    main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-                    
-                    # Left: All available pieces
-                    left_frame = tk.Frame(main_container, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
-                    left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
-                    
-                    tk.Label(left_frame, text="Pièces disponibles", font=ProfessionalTheme.SUBTITLE_FONT, 
-                            bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY).pack(pady=10)
-                    
-                    cols = ("ID", "Nom", "Réf", "Prix", "Stock")
-                    tree_left = ttk.Treeview(left_frame, columns=cols, show="headings", height=15)
-                    for col in cols:
-                        tree_left.heading(col, text=col)
-                        tree_left.column(col, width=(50 if col == "ID" else 120))
-                    tree_left.pack(padx=10, pady=(0, 10), fill=tk.BOTH, expand=True)
-                    
-                    # Right: Currently selected pieces
-                    right_frame = tk.Frame(main_container, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
-                    right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-                    
-                    tk.Label(right_frame, text="Pièces sélectionnées", font=ProfessionalTheme.SUBTITLE_FONT, 
-                            bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY).pack(pady=10)
-                    
-                    cols2 = ("Piece ID", "Nom", "Quantité", "Prix unitaire", "Coût total")
-                    tree_right = ttk.Treeview(right_frame, columns=cols2, show="headings", height=15)
-                    for col in cols2:
-                        tree_right.heading(col, text=col)
-                        tree_right.column(col, width=(80 if col == "Piece ID" else 110))
-                    tree_right.pack(padx=10, pady=(0, 10), fill=tk.BOTH, expand=True)
-                    
-                    def load_all_pieces():
-                        for item in tree_left.get_children():
-                            tree_left.delete(item)
-                        conn = sqlite3.connect(DB_FILE)
-                        c = conn.cursor()
-                        c.execute("SELECT id, nom, reference, prix_unitaire, quantite_stock FROM pieces ORDER BY nom")
-                        rows = c.fetchall()
-                        conn.close()
-                        for row in rows:
-                            tree_left.insert("", tk.END, values=row)
-                    
-                    def load_selected_pieces():
-                        for item in tree_right.get_children():
-                            tree_right.delete(item)
-                        for piece in selected_pieces:
-                            tree_right.insert("", tk.END, values=(
-                                piece['piece_id'], piece['name'], piece['qty'], 
-                                f"{piece['price']:.2f}", f"{piece['total_cost']:.2f}"
-                            ))
-                    
-                    def add_piece():
-                        selected = tree_left.selection()
-                        if not selected:
-                            messagebox.showwarning("Attention", "Sélectionnez une pièce à ajouter")
-                            return
-                        values = tree_left.item(selected[0], 'values')
-                        piece_id, name, ref, price, stock = values
-                        
-                        quantity_str = simpledialog.askstring("Quantité", 
-                                                              f"Quantité à utiliser pour '{name}' (stock {stock}) :", 
-                                                              parent=pieces_window)
-                        if not quantity_str:
-                            return
-                        
-                        try:
-                            quantity = int(quantity_str)
-                            if quantity <= 0:
-                                raise ValueError("Quantité doit être positive")
-                            if quantity > int(stock):
-                                messagebox.showwarning("Stock insuffisant", 
-                                                      f"Stock disponible: {stock}")
-                                return
-                        except ValueError:
-                            messagebox.showwarning("Erreur", "Veuillez entrer un nombre valide")
-                            return
-                        
-                        # Check if piece already selected
-                        for item in tree_right.get_children():
-                            item_values = tree_right.item(item, 'values')
-                            if int(item_values[0]) == int(piece_id):
-                                messagebox.showwarning("Doublon", 
-                                                      f"Pièce '{name}' déjà sélectionnée")
-                                return
-                        
-                        # Add to selected pieces
-                        total_cost = quantity * float(price)
-                        tree_right.insert("", tk.END, values=(piece_id, name, quantity, price, f"{total_cost:.2f}"))
-                        
-                        # Update selected_pieces list
-                        nonlocal selected_pieces
-                        selected_pieces.append({
-                            'piece_id': int(piece_id),
-                            'name': name,
-                            'price': float(price),
-                            'qty': quantity,
-                            'total_cost': total_cost
-                        })
-                    
-                    def remove_piece():
-                        selected = tree_right.selection()
-                        if not selected:
-                            messagebox.showwarning("Attention", "Sélectionnez une pièce à retirer")
-                            return
-                        
-                        # Remove from tree
-                        values = tree_right.item(selected[0], 'values')
-                        piece_id = int(values[0])
-                        tree_right.delete(selected[0])
-                        
-                        # Remove from selected_pieces list (CORRECTION: PAS de restauration automatique)
-                        nonlocal selected_pieces
-                        selected_pieces = [p for p in selected_pieces if p['piece_id'] != piece_id]
-                        
-                        # Refresh available pieces list
-                        load_all_pieces()
-                    
-                    def save_selection():
-                        pieces_window.destroy()
-                        
-                    # Middle button container - FIXED
-                    middle_container = tk.Frame(main_container, bg=ProfessionalTheme.LIGHT)
-                    middle_container.pack(side=tk.LEFT, fill=tk.Y, padx=10)
-                    
-                    # Add piece button
-                    ttk.Button(middle_container, text="→ Ajouter", command=add_piece, 
-                              style="Success.TButton").pack(pady=5)
-                    
-                    # Remove piece button
-                    ttk.Button(middle_container, text="← Retirer", command=remove_piece, 
-                              style="Danger.TButton").pack(pady=5)
-                    
-                    # Bottom button container - FIXED
-                    bottom_container = tk.Frame(pieces_window, bg=ProfessionalTheme.LIGHT)
-                    bottom_container.pack(fill=tk.X, padx=20, pady=(0, 20))
-                    
-                    ttk.Button(bottom_container, text="Valider", command=save_selection, 
-                              style="Primary.TButton").pack(side=tk.RIGHT)
-                    
-                    # Load data
-                    load_all_pieces()
-                    load_selected_pieces()
+                # Initialize selected_pieces with original pieces
+                selected_pieces = []
+                for piece in original_pieces:
+                    piece_dict = {
+                        'piece_id': piece[0],
+                        'name': piece[1],
+                        'qty': piece[2],
+                        'price': piece[3],
+                        'total_cost': piece[4]
+                    }
+                    selected_pieces.append(piece_dict)
                 
-                manage_used_pieces_edit(edit_window)
+                # Form fields
+                tk.Label(form_container, text="Date d'entrée *:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=0, column=0, sticky="w", padx=20, pady=12)
+                entry_date_in = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                       bd=1, relief="solid", highlightthickness=0)
+                entry_date_in.grid(row=0, column=1, padx=20, pady=12, sticky="ew")
+                entry_date_in.insert(0, intervention[0] or "")
+                
+                tk.Label(form_container, text="Date de sortie:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=1, column=0, sticky="w", padx=20, pady=12)
+                entry_date_out = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                        bd=1, relief="solid", highlightthickness=0)
+                entry_date_out.grid(row=1, column=1, padx=20, pady=12, sticky="ew")
+                entry_date_out.insert(0, intervention[1] or "")
+                
+                tk.Label(form_container, text="Technicien:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=2, column=0, sticky="w", padx=20, pady=12)
+                entry_technician = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                          bd=1, relief="solid", highlightthickness=0)
+                entry_technician.grid(row=2, column=1, padx=20, pady=12, sticky="ew")
+                entry_technician.insert(0, intervention[2] or "")
+                
+                tk.Label(form_container, text="Coût:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=3, column=0, sticky="w", padx=20, pady=12)
+                entry_cost = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                     bd=1, relief="solid", highlightthickness=0)
+                entry_cost.grid(row=3, column=1, padx=20, pady=12, sticky="ew")
+                entry_cost.insert(0, intervention[3] or "")
+                
+                tk.Label(form_container, text="Détails:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=4, column=0, sticky="nw", padx=20, pady=12)
+                text_details = tk.Text(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                     bd=1, relief="solid", highlightthickness=0, height=6)
+                text_details.grid(row=4, column=1, padx=20, pady=12, sticky="ew")
+                text_details.insert("1.0", intervention[4] or "")
+                
+                def save_edits():
+                    date_in = entry_date_in.get().strip()
+                    date_out = entry_date_out.get().strip()
+                    technician = entry_technician.get().strip()
+                    cost_str = entry_cost.get().strip()
+                    details = text_details.get("1.0", tk.END).strip()
+                    
+                    # Validate required fields
+                    if not date_in:
+                        messagebox.showwarning("Attention", "Date d'entrée obligatoire")
+                        return
+                    
+                    try:
+                        cost = float(cost_str) if cost_str else 0.0
+                    except ValueError:
+                        messagebox.showwarning("Erreur", "Coût invalide")
+                        return
+                    
+                    # Validate dates
+                    try:
+                        datetime.strptime(date_in, "%Y-%m-%d")
+                        if date_out:
+                            datetime.strptime(date_out, "%Y-%m-%d")
+                    except ValueError:
+                        messagebox.showwarning("Erreur", "Format de date invalide (YYYY-MM-DD)")
+                        return
+                    
+                    # Save intervention changes to database
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
+                    
+                    # Restore stock for original pieces
+                    for piece in original_pieces:
+                        c.execute("SELECT quantite_stock FROM pieces WHERE id=?", (piece[0],))
+                        current_stock = c.fetchone()[0]
+                        new_stock = current_stock + piece[2]  # Add back the quantity
+                        c.execute("UPDATE pieces SET quantite_stock=? WHERE id=?", (new_stock, piece[0]))
+                    
+                    # Delete original piece associations
+                    c.execute("DELETE FROM intervention_pieces WHERE intervention_id=?", (intervention_id,))
+                    
+                    # Update intervention
+                    c.execute('''UPDATE interventions SET 
+                              date_entree=?, date_sortie=?, details_reparation=?, technicien=?, cout=? 
+                              WHERE id=?''',
+                              (date_in, date_out, details, technician, cost, intervention_id))
+                    
+                    # Save pieces usage if any
+                    total_pieces_cost = 0
+                    if selected_pieces:
+                        for piece in selected_pieces:
+                            # Save piece usage
+                            c.execute('''INSERT INTO intervention_pieces 
+                                      (intervention_id, piece_id, quantite_utilisee, cout_total) 
+                                      VALUES (?, ?, ?, ?)''',
+                                      (intervention_id, piece['piece_id'], piece['qty'], piece['total_cost']))
+                            
+                            # Deduct stock
+                            c.execute("SELECT quantite_stock FROM pieces WHERE id=?", (piece['piece_id'],))
+                            current_stock = c.fetchone()[0]
+                            new_stock = current_stock - piece['qty']
+                            c.execute("UPDATE pieces SET quantite_stock=? WHERE id=?", 
+                                     (new_stock, piece['piece_id']))
+                    
+                    conn.commit()
+                    conn.close()
+                    
+                    messagebox.showinfo("Succès", "Intervention modifiée avec succès!")
+                    edit_window.destroy()
+                    refresh_interventions()
+                
+                def manage_pieces():
+                    def manage_used_pieces_edit(parent_window):
+                        # Check if a pieces window for this parent already exists
+                        for child in parent_window.winfo_children():
+                            if isinstance(child, tk.Toplevel) and hasattr(child, 'pieces_selection_edit'):
+                                child.lift()
+                                child.focus_force()
+                                return
+                        
+                        # Create new window
+                        pieces_window = tk.Toplevel(parent_window)
+                        pieces_window.title("Gérer les pièces utilisées")
+                        pieces_window.geometry("900x500")
+                        pieces_window.configure(bg=ProfessionalTheme.LIGHT)
+                        
+                        # Add a custom attribute to identify this window type
+                        pieces_window.pieces_selection_edit = True
+                        
+                        # Header
+                        header_frame = tk.Frame(pieces_window, bg=ProfessionalTheme.PRIMARY, height=50)
+                        header_frame.pack(fill=tk.X)
+                        header_frame.pack_propagate(False)
+                        
+                        tk.Label(header_frame, text="Gérer les pièces utilisées", 
+                                font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
+                                fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
+                        
+                        # Main container
+                        main_container = tk.Frame(pieces_window, bg=ProfessionalTheme.LIGHT)
+                        main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+                        
+                        # Left: All available pieces
+                        left_frame = tk.Frame(main_container, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
+                        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+                        
+                        tk.Label(left_frame, text="Pièces disponibles", font=ProfessionalTheme.SUBTITLE_FONT, 
+                                bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY).pack(pady=10)
+                        
+                        cols = ("ID", "Nom", "Réf", "Prix", "Stock")
+                        tree_left = ttk.Treeview(left_frame, columns=cols, show="headings", height=15)
+                        for col in cols:
+                            tree_left.heading(col, text=col)
+                            tree_left.column(col, width=(50 if col == "ID" else 120))
+                        tree_left.pack(padx=10, pady=(0, 10), fill=tk.BOTH, expand=True)
+                        
+                        # Right: Currently selected pieces
+                        right_frame = tk.Frame(main_container, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
+                        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+                        
+                        tk.Label(right_frame, text="Pièces sélectionnées", font=ProfessionalTheme.SUBTITLE_FONT, 
+                                bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY).pack(pady=10)
+                        
+                        cols2 = ("Piece ID", "Nom", "Quantité", "Prix unitaire", "Coût total")
+                        tree_right = ttk.Treeview(right_frame, columns=cols2, show="headings", height=15)
+                        for col in cols2:
+                            tree_right.heading(col, text=col)
+                            tree_right.column(col, width=(80 if col == "Piece ID" else 110))
+                        tree_right.pack(padx=10, pady=(0, 10), fill=tk.BOTH, expand=True)
+                        
+                        def load_all_pieces():
+                            for item in tree_left.get_children():
+                                tree_left.delete(item)
+                            conn = sqlite3.connect(DB_FILE)
+                            c = conn.cursor()
+                            c.execute("SELECT id, nom, reference, prix_unitaire, quantite_stock FROM pieces ORDER BY nom")
+                            rows = c.fetchall()
+                            conn.close()
+                            for row in rows:
+                                tree_left.insert("", tk.END, values=row)
+                        
+                        def load_selected_pieces():
+                            for item in tree_right.get_children():
+                                tree_right.delete(item)
+                            for piece in selected_pieces:
+                                tree_right.insert("", tk.END, values=(
+                                    piece['piece_id'], piece['name'], piece['qty'], 
+                                    f"{piece['price']:.2f}", f"{piece['total_cost']:.2f}"
+                                ))
+                        
+                        def add_piece():
+                            selected = tree_left.selection()
+                            if not selected:
+                                messagebox.showwarning("Attention", "Sélectionnez une pièce à ajouter")
+                                return
+                            values = tree_left.item(selected[0], 'values')
+                            piece_id, name, ref, price, stock = values
+                            
+                            quantity_str = simpledialog.askstring("Quantité", 
+                                                                  f"Quantité à utiliser pour '{name}' (stock {stock}) :", 
+                                                                  parent=pieces_window)
+                            if not quantity_str:
+                                return
+                            
+                            try:
+                                quantity = int(quantity_str)
+                                if quantity <= 0:
+                                    raise ValueError("Quantité doit être positive")
+                                if quantity > int(stock):
+                                    messagebox.showwarning("Stock insuffisant", 
+                                                          f"Stock disponible: {stock}")
+                                    return
+                            except ValueError:
+                                messagebox.showwarning("Erreur", "Veuillez entrer un nombre valide")
+                                return
+                            
+                            # Check if piece already selected
+                            for item in tree_right.get_children():
+                                item_values = tree_right.item(item, 'values')
+                                if int(item_values[0]) == int(piece_id):
+                                    messagebox.showwarning("Doublon", 
+                                                          f"Pièce '{name}' déjà sélectionnée")
+                                    return
+                            
+                            # Add to selected pieces
+                            total_cost = quantity * float(price)
+                            tree_right.insert("", tk.END, values=(piece_id, name, quantity, price, f"{total_cost:.2f}"))
+                            
+                            # Update selected_pieces list
+                            nonlocal selected_pieces
+                            selected_pieces.append({
+                                'piece_id': int(piece_id),
+                                'name': name,
+                                'price': float(price),
+                                'qty': quantity,
+                                'total_cost': total_cost
+                            })
+                        
+                        def remove_piece():
+                            selected = tree_right.selection()
+                            if not selected:
+                                messagebox.showwarning("Attention", "Sélectionnez une pièce à retirer")
+                                return
+                            
+                            # Remove from tree
+                            values = tree_right.item(selected[0], 'values')
+                            piece_id = int(values[0])
+                            tree_right.delete(selected[0])
+                            
+                            # Remove from selected_pieces list
+                            nonlocal selected_pieces
+                            selected_pieces = [p for p in selected_pieces if p['piece_id'] != piece_id]
+                            
+                            # Refresh available pieces list
+                            load_all_pieces()
+                        
+                        def save_selection():
+                            pieces_window.destroy()
+                            
+                        # Middle button container
+                        middle_container = tk.Frame(main_container, bg=ProfessionalTheme.LIGHT)
+                        middle_container.pack(side=tk.LEFT, fill=tk.Y, padx=10)
+                        
+                        # Add piece button
+                        ttk.Button(middle_container, text="→ Ajouter", command=add_piece, 
+                                  style="Success.TButton").pack(pady=5)
+                        
+                        # Remove piece button
+                        ttk.Button(middle_container, text="← Retirer", command=remove_piece, 
+                                  style="Danger.TButton").pack(pady=5)
+                        
+                        # Bottom button container
+                        bottom_container = tk.Frame(pieces_window, bg=ProfessionalTheme.LIGHT)
+                        bottom_container.pack(fill=tk.X, padx=20, pady=(0, 20))
+                        
+                        ttk.Button(bottom_container, text="Valider", command=save_selection, 
+                                  style="Primary.TButton").pack(side=tk.RIGHT)
+                        
+                        # Load data
+                        load_all_pieces()
+                        load_selected_pieces()
+                    
+                    manage_used_pieces_edit(edit_window)
+                
+                # Buttons
+                button_frame = tk.Frame(form_container, bg=ProfessionalTheme.WHITE)
+                button_frame.grid(row=5, column=0, columnspan=2, pady=20)
+                
+                ttk.Button(button_frame, text="Gérer les pièces", 
+                          command=manage_pieces, 
+                          style="Warning.TButton").pack(side=tk.LEFT, padx=(0, 10))
+                ttk.Button(button_frame, text="Sauvegarder", 
+                          command=save_edits, 
+                          style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
+                ttk.Button(button_frame, text="Annuler", 
+                          command=edit_window.destroy, 
+                          style="Danger.TButton").pack(side=tk.LEFT)
+                
+                form_container.columnconfigure(1, weight=1)
+                
+                return edit_window
             
-            # Buttons
-            button_frame = tk.Frame(form_container, bg=ProfessionalTheme.WHITE)
-            button_frame.grid(row=5, column=0, columnspan=2, pady=20)
-            
-            ttk.Button(button_frame, text="Gérer les pièces", 
-                      command=manage_pieces, 
-                      style="Warning.TButton").pack(side=tk.LEFT, padx=(0, 10))
-            ttk.Button(button_frame, text="Sauvegarder", 
-                      command=save_edits, 
-                      style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
-            ttk.Button(button_frame, text="Annuler", 
-                      command=edit_window.destroy, 
-                      style="Danger.TButton").pack(side=tk.LEFT)
-            
-            form_container.columnconfigure(1, weight=1)
+            window_manager.open_window(f"edit_intervention_{intervention_id}", create_edit_window)
         
         def delete_intervention():
             selected = tree.selection()
@@ -1658,99 +1767,104 @@ def open_gmao_interface():
                 tree_maint.insert("", tk.END, values=maintenance)
         
         def add_maintenance():
-            add_maint_window = tk.Toplevel(history_window)
-            add_maint_window.title("Planifier une maintenance")
-            add_maint_window.geometry("500x500")
-            add_maint_window.configure(bg=ProfessionalTheme.LIGHT)
-            
-            # Header
-            header_frame = tk.Frame(add_maint_window, bg=ProfessionalTheme.PRIMARY, height=50)
-            header_frame.pack(fill=tk.X)
-            header_frame.pack_propagate(False)
-            
-            tk.Label(header_frame, text="Planifier une maintenance", 
-                    font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
-                    fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
-            
-            # Form container
-            form_container = tk.Frame(add_maint_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
-            form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-            
-            tk.Label(form_container, text="Date prévue *:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=0, column=0, sticky="w", padx=20, pady=12)
-            entry_date = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
-                                bd=1, relief="solid", highlightthickness=0)
-            entry_date.grid(row=0, column=1, padx=20, pady=12, sticky="ew")
-            entry_date.insert(0, (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"))
-            
-            tk.Label(form_container, text="Type de maintenance *:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=1, column=0, sticky="w", padx=20, pady=12)
-            entry_type = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
-                                bd=1, relief="solid", highlightthickness=0)
-            entry_type.grid(row=1, column=1, padx=20, pady=12, sticky="ew")
-            
-            tk.Label(form_container, text="Technicien:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=2, column=0, sticky="w", padx=20, pady=12)
-            entry_tech = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
-                                 bd=1, relief="solid", highlightthickness=0)
-            entry_tech.grid(row=2, column=1, padx=20, pady=12, sticky="ew")
-            
-            tk.Label(form_container, text="Statut:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=3, column=0, sticky="w", padx=20, pady=12)
-            combo_status = ttk.Combobox(form_container, values=["Planifié", "En cours", "Terminé"], state="readonly")
-            combo_status.grid(row=3, column=1, padx=20, pady=12, sticky="ew")
-            combo_status.set("Planifié")
-            
-            tk.Label(form_container, text="Notes:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=4, column=0, sticky="nw", padx=20, pady=12)
-            text_notes = tk.Text(form_container, font=ProfessionalTheme.BODY_FONT, 
-                               bd=1, relief="solid", highlightthickness=0, height=6)
-            text_notes.grid(row=4, column=1, padx=20, pady=12, sticky="ew")
-            
-            def save_maintenance():
-                date = entry_date.get().strip()
-                maint_type = entry_type.get().strip()
-                technician = entry_tech.get().strip()
-                status = combo_status.get()
-                notes = text_notes.get("1.0", tk.END).strip()
+            def create_add_maint_window():
+                add_maint_window = tk.Toplevel(history_window)
+                add_maint_window.title("Planifier une maintenance")
+                add_maint_window.geometry("500x500")
+                add_maint_window.configure(bg=ProfessionalTheme.LIGHT)
                 
-                if not date or not maint_type:
-                    messagebox.showwarning("Attention", "Date et Type sont obligatoires")
-                    return
+                # Header
+                header_frame = tk.Frame(add_maint_window, bg=ProfessionalTheme.PRIMARY, height=50)
+                header_frame.pack(fill=tk.X)
+                header_frame.pack_propagate(False)
                 
-                try:
-                    datetime.strptime(date, "%Y-%m-%d")
-                except ValueError:
-                    messagebox.showwarning("Erreur", "Format de date invalide (YYYY-MM-DD)")
-                    return
+                tk.Label(header_frame, text="Planifier une maintenance", 
+                        font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
+                        fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
                 
-                conn = sqlite3.connect(DB_FILE)
-                c = conn.cursor()
-                c.execute('''INSERT INTO planification 
-                          (equipement_id, date_prevue, type_maintenance, technicien, statut, notes) 
-                          VALUES (?, ?, ?, ?, ?, ?)''',
-                          (equipment_id, date, maint_type, technician, status, notes))
-                conn.commit()
-                conn.close()
+                # Form container
+                form_container = tk.Frame(add_maint_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
+                form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
                 
-                messagebox.showinfo("Succès", "Maintenance planifiée avec succès!")
-                add_maint_window.destroy()
-                refresh_maintenance()
+                tk.Label(form_container, text="Date prévue *:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=0, column=0, sticky="w", padx=20, pady=12)
+                entry_date = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                    bd=1, relief="solid", highlightthickness=0)
+                entry_date.grid(row=0, column=1, padx=20, pady=12, sticky="ew")
+                entry_date.insert(0, (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"))
+                
+                tk.Label(form_container, text="Type de maintenance *:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=1, column=0, sticky="w", padx=20, pady=12)
+                entry_type = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                    bd=1, relief="solid", highlightthickness=0)
+                entry_type.grid(row=1, column=1, padx=20, pady=12, sticky="ew")
+                
+                tk.Label(form_container, text="Technicien:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=2, column=0, sticky="w", padx=20, pady=12)
+                entry_tech = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                     bd=1, relief="solid", highlightthickness=0)
+                entry_tech.grid(row=2, column=1, padx=20, pady=12, sticky="ew")
+                
+                tk.Label(form_container, text="Statut:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=3, column=0, sticky="w", padx=20, pady=12)
+                combo_status = ttk.Combobox(form_container, values=["Planifié", "En cours", "Terminé"], state="readonly")
+                combo_status.grid(row=3, column=1, padx=20, pady=12, sticky="ew")
+                combo_status.set("Planifié")
+                
+                tk.Label(form_container, text="Notes:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=4, column=0, sticky="nw", padx=20, pady=12)
+                text_notes = tk.Text(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                   bd=1, relief="solid", highlightthickness=0, height=6)
+                text_notes.grid(row=4, column=1, padx=20, pady=12, sticky="ew")
+                
+                def save_maintenance():
+                    date = entry_date.get().strip()
+                    maint_type = entry_type.get().strip()
+                    technician = entry_tech.get().strip()
+                    status = combo_status.get()
+                    notes = text_notes.get("1.0", tk.END).strip()
+                    
+                    if not date or not maint_type:
+                        messagebox.showwarning("Attention", "Date et Type sont obligatoires")
+                        return
+                    
+                    try:
+                        datetime.strptime(date, "%Y-%m-%d")
+                    except ValueError:
+                        messagebox.showwarning("Erreur", "Format de date invalide (YYYY-MM-DD)")
+                        return
+                    
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
+                    c.execute('''INSERT INTO planification 
+                              (equipement_id, date_prevue, type_maintenance, technicien, statut, notes) 
+                              VALUES (?, ?, ?, ?, ?, ?)''',
+                              (equipment_id, date, maint_type, technician, status, notes))
+                    conn.commit()
+                    conn.close()
+                    
+                    messagebox.showinfo("Succès", "Maintenance planifiée avec succès!")
+                    add_maint_window.destroy()
+                    refresh_maintenance()
+                
+                button_frame = tk.Frame(form_container, bg=ProfessionalTheme.WHITE)
+                button_frame.grid(row=5, column=0, columnspan=2, pady=20)
+                
+                ttk.Button(button_frame, text="Sauvegarder", command=save_maintenance, 
+                          style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
+                ttk.Button(button_frame, text="Annuler", command=add_maint_window.destroy, 
+                          style="Danger.TButton").pack(side=tk.LEFT)
+                
+                form_container.columnconfigure(1, weight=1)
+                
+                return add_maint_window
             
-            button_frame = tk.Frame(form_container, bg=ProfessionalTheme.WHITE)
-            button_frame.grid(row=5, column=0, columnspan=2, pady=20)
-            
-            ttk.Button(button_frame, text="Sauvegarder", command=save_maintenance, 
-                      style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
-            ttk.Button(button_frame, text="Annuler", command=add_maint_window.destroy, 
-                      style="Danger.TButton").pack(side=tk.LEFT)
-            
-            form_container.columnconfigure(1, weight=1)
+            window_manager.open_window(f"add_maintenance_{equipment_id}", create_add_maint_window)
         
         def edit_maintenance():
             selected = tree_maint.selection()
@@ -1761,110 +1875,115 @@ def open_gmao_interface():
             values = tree_maint.item(selected[0], 'values')
             maintenance_id = values[0]
             
-            edit_maint_window = tk.Toplevel(history_window)
-            edit_maint_window.title("Modifier une maintenance")
-            edit_maint_window.geometry("500x500")
-            edit_maint_window.configure(bg=ProfessionalTheme.LIGHT)
-            
-            # Header
-            header_frame = tk.Frame(edit_maint_window, bg=ProfessionalTheme.PRIMARY, height=50)
-            header_frame.pack(fill=tk.X)
-            header_frame.pack_propagate(False)
-            
-            tk.Label(header_frame, text="Modifier une maintenance", 
-                    font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
-                    fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
-            
-            # Form container
-            form_container = tk.Frame(edit_maint_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
-            form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-            
-            # Load data
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            c.execute('''SELECT date_prevue, type_maintenance, technicien, statut, notes 
-                         FROM planification WHERE id=?''', (maintenance_id,))
-            maintenance = c.fetchone()
-            conn.close()
-            
-            tk.Label(form_container, text="Date prévue *:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=0, column=0, sticky="w", padx=20, pady=12)
-            entry_date = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
-                                bd=1, relief="solid", highlightthickness=0)
-            entry_date.grid(row=0, column=1, padx=20, pady=12, sticky="ew")
-            entry_date.insert(0, maintenance[0] or "")
-            
-            tk.Label(form_container, text="Type de maintenance *:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=1, column=0, sticky="w", padx=20, pady=12)
-            entry_type = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
-                                bd=1, relief="solid", highlightthickness=0)
-            entry_type.grid(row=1, column=1, padx=20, pady=12, sticky="ew")
-            entry_type.insert(0, maintenance[1] or "")
-            
-            tk.Label(form_container, text="Technicien:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=2, column=0, sticky="w", padx=20, pady=12)
-            entry_tech = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
-                                 bd=1, relief="solid", highlightthickness=0)
-            entry_tech.grid(row=2, column=1, padx=20, pady=12, sticky="ew")
-            entry_tech.insert(0, maintenance[2] or "")
-            
-            tk.Label(form_container, text="Statut:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=3, column=0, sticky="w", padx=20, pady=12)
-            combo_status = ttk.Combobox(form_container, values=["Planifié", "En cours", "Terminé"], state="readonly")
-            combo_status.grid(row=3, column=1, padx=20, pady=12, sticky="ew")
-            combo_status.set(maintenance[3] or "Planifié")
-            
-            tk.Label(form_container, text="Notes:", font=ProfessionalTheme.BODY_FONT, 
-                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
-                row=4, column=0, sticky="nw", padx=20, pady=12)
-            text_notes = tk.Text(form_container, font=ProfessionalTheme.BODY_FONT, 
-                               bd=1, relief="solid", highlightthickness=0, height=6)
-            text_notes.grid(row=4, column=1, padx=20, pady=12, sticky="ew")
-            text_notes.insert("1.0", maintenance[4] or "")
-            
-            def save_edits():
-                date = entry_date.get().strip()
-                maint_type = entry_type.get().strip()
-                technician = entry_tech.get().strip()
-                status = combo_status.get()
-                notes = text_notes.get("1.0", tk.END).strip()
+            def create_edit_maint_window():
+                edit_maint_window = tk.Toplevel(history_window)
+                edit_maint_window.title("Modifier une maintenance")
+                edit_maint_window.geometry("500x500")
+                edit_maint_window.configure(bg=ProfessionalTheme.LIGHT)
                 
-                if not date or not maint_type:
-                    messagebox.showwarning("Attention", "Date et Type sont obligatoires")
-                    return
+                # Header
+                header_frame = tk.Frame(edit_maint_window, bg=ProfessionalTheme.PRIMARY, height=50)
+                header_frame.pack(fill=tk.X)
+                header_frame.pack_propagate(False)
                 
-                try:
-                    datetime.strptime(date, "%Y-%m-%d")
-                except ValueError:
-                    messagebox.showwarning("Erreur", "Format de date invalide (YYYY-MM-DD)")
-                    return
+                tk.Label(header_frame, text="Modifier une maintenance", 
+                        font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
+                        fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
                 
+                # Form container
+                form_container = tk.Frame(edit_maint_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
+                form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+                
+                # Load data
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
-                c.execute('''UPDATE planification SET 
-                          date_prevue=?, type_maintenance=?, technicien=?, statut=?, notes=? 
-                          WHERE id=?''',
-                          (date, maint_type, technician, status, notes, maintenance_id))
-                conn.commit()
+                c.execute('''SELECT date_prevue, type_maintenance, technicien, statut, notes 
+                             FROM planification WHERE id=?''', (maintenance_id,))
+                maintenance = c.fetchone()
                 conn.close()
                 
-                messagebox.showinfo("Succès", "Maintenance modifiée avec succès!")
-                edit_maint_window.destroy()
-                refresh_maintenance()
+                tk.Label(form_container, text="Date prévue *:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=0, column=0, sticky="w", padx=20, pady=12)
+                entry_date = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                    bd=1, relief="solid", highlightthickness=0)
+                entry_date.grid(row=0, column=1, padx=20, pady=12, sticky="ew")
+                entry_date.insert(0, maintenance[0] or "")
+                
+                tk.Label(form_container, text="Type de maintenance *:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=1, column=0, sticky="w", padx=20, pady=12)
+                entry_type = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                    bd=1, relief="solid", highlightthickness=0)
+                entry_type.grid(row=1, column=1, padx=20, pady=12, sticky="ew")
+                entry_type.insert(0, maintenance[1] or "")
+                
+                tk.Label(form_container, text="Technicien:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=2, column=0, sticky="w", padx=20, pady=12)
+                entry_tech = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                     bd=1, relief="solid", highlightthickness=0)
+                entry_tech.grid(row=2, column=1, padx=20, pady=12, sticky="ew")
+                entry_tech.insert(0, maintenance[2] or "")
+                
+                tk.Label(form_container, text="Statut:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=3, column=0, sticky="w", padx=20, pady=12)
+                combo_status = ttk.Combobox(form_container, values=["Planifié", "En cours", "Terminé"], state="readonly")
+                combo_status.grid(row=3, column=1, padx=20, pady=12, sticky="ew")
+                combo_status.set(maintenance[3] or "Planifié")
+                
+                tk.Label(form_container, text="Notes:", font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=4, column=0, sticky="nw", padx=20, pady=12)
+                text_notes = tk.Text(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                   bd=1, relief="solid", highlightthickness=0, height=6)
+                text_notes.grid(row=4, column=1, padx=20, pady=12, sticky="ew")
+                text_notes.insert("1.0", maintenance[4] or "")
+                
+                def save_edits():
+                    date = entry_date.get().strip()
+                    maint_type = entry_type.get().strip()
+                    technician = entry_tech.get().strip()
+                    status = combo_status.get()
+                    notes = text_notes.get("1.0", tk.END).strip()
+                    
+                    if not date or not maint_type:
+                        messagebox.showwarning("Attention", "Date et Type sont obligatoires")
+                        return
+                    
+                    try:
+                        datetime.strptime(date, "%Y-%m-%d")
+                    except ValueError:
+                        messagebox.showwarning("Erreur", "Format de date invalide (YYYY-MM-DD)")
+                        return
+                    
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
+                    c.execute('''UPDATE planification SET 
+                              date_prevue=?, type_maintenance=?, technicien=?, statut=?, notes=? 
+                              WHERE id=?''',
+                              (date, maint_type, technician, status, notes, maintenance_id))
+                    conn.commit()
+                    conn.close()
+                    
+                    messagebox.showinfo("Succès", "Maintenance modifiée avec succès!")
+                    edit_maint_window.destroy()
+                    refresh_maintenance()
+                
+                button_frame = tk.Frame(form_container, bg=ProfessionalTheme.WHITE)
+                button_frame.grid(row=5, column=0, columnspan=2, pady=20)
+                
+                ttk.Button(button_frame, text="Sauvegarder", command=save_edits, 
+                          style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
+                ttk.Button(button_frame, text="Annuler", command=edit_maint_window.destroy, 
+                          style="Danger.TButton").pack(side=tk.LEFT)
+                
+                form_container.columnconfigure(1, weight=1)
+                
+                return edit_maint_window
             
-            button_frame = tk.Frame(form_container, bg=ProfessionalTheme.WHITE)
-            button_frame.grid(row=5, column=0, columnspan=2, pady=20)
-            
-            ttk.Button(button_frame, text="Sauvegarder", command=save_edits, 
-                      style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
-            ttk.Button(button_frame, text="Annuler", command=edit_maint_window.destroy, 
-                      style="Danger.TButton").pack(side=tk.LEFT)
-            
-            form_container.columnconfigure(1, weight=1)
+            window_manager.open_window(f"edit_maintenance_{maintenance_id}", create_edit_maint_window)
         
         def delete_maintenance():
             selected = tree_maint.selection()
@@ -1898,31 +2017,11 @@ def open_gmao_interface():
                   style="Primary.TButton").pack(side=tk.LEFT)
         
         refresh_maintenance()
+        
+        return history_window
     
-    # Stock Management Button
-    stock_button_frame = tk.Frame(main_container, bg=ProfessionalTheme.LIGHT)
-    stock_button_frame.pack(fill=tk.X, pady=(0, 20))
-    
-    ttk.Button(stock_button_frame, text="📦 Gestion des Pièces de Rechange", 
-              command=open_parts_management, style="Warning.TButton").pack(fill=tk.X)
-    
-    # Footer
-    footer_frame = tk.Frame(root, bg=ProfessionalTheme.PRIMARY, height=40)
-    footer_frame.pack(fill=tk.X, side=tk.BOTTOM)
-    footer_frame.pack_propagate(False)
-    
-    tk.Label(footer_frame, text="Système GMAO v1.0 | Tous droits réservés", 
-             font=ProfessionalTheme.BODY_FONT, bg=ProfessionalTheme.PRIMARY, 
-             fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=10)
-    
-    # Handle Enter key in search field
-    entry_serial.bind('<Return>', lambda event: search_equipment())
-    
-    # Initialize reminder system
-    check_reminders(root)
-    
-    # Run main loop
-    root.mainloop()
+    # Use the window manager to open/create the window
+    return window_manager.open_window(f"equipment_history_{equipment_id}", create_history_window)
 
 # Initialize database and start application
 if __name__ == "__main__":
