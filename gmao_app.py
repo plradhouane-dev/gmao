@@ -645,20 +645,7 @@ def open_gmao_interface():
                 if valid:
                     pieces_window.destroy()
             
-            def refresh_pieces_display():
-                """Refresh both panels with updated data"""
-                load_pieces_list()
-                
-                # Refresh right panel (selected pieces) to maintain consistency
-                for item in tree_right.get_children():
-                    tree_right.delete(item)
-                for piece in selected_pieces:
-                    tree_right.insert("", tk.END, values=(
-                        piece['piece_id'], piece['name'], piece['qty'], 
-                        f"{piece['price']:.2f}", f"{piece['total_cost']:.2f}"
-                    ))
-            
-            # Buttons
+            # Buttons - MODIFICATION: Only "Ajouter" and "Retirer" buttons
             button_frame = tk.Frame(pieces_window)
             button_frame.pack(fill=tk.X, pady=10)
             
@@ -666,8 +653,6 @@ def open_gmao_interface():
                      bg="#4CAF50", fg="white").pack(side=tk.LEFT, padx=10)
             tk.Button(button_frame, text="← Retirer", command=remove_from_intervention, 
                      bg="#f44336", fg="white").pack(side=tk.LEFT, padx=10)
-            tk.Button(button_frame, text="🔄 Rafraîchir", command=refresh_pieces_display, 
-                     bg="#FF9800", fg="white").pack(side=tk.LEFT, padx=10)
             tk.Button(button_frame, text="Valider", command=validate_selection, 
                      bg="#2196F3", fg="white").pack(side=tk.RIGHT, padx=10)
             
@@ -1120,20 +1105,7 @@ def open_gmao_interface():
                     def save_selection():
                         pieces_window.destroy()
                         
-                    def refresh_pieces_display():
-                        """Refresh both panels with updated data"""
-                        load_all_pieces()
-                        
-                        # Refresh right panel (selected pieces) to maintain consistency
-                        for item in tree_right.get_children():
-                            tree_right.delete(item)
-                        for piece in selected_pieces:
-                            tree_right.insert("", tk.END, values=(
-                                piece['piece_id'], piece['name'], piece['qty'], 
-                                f"{piece['price']:.2f}", f"{piece['total_cost']:.2f}"
-                            ))
-                    
-                    # Buttons
+                    # Buttons - MODIFICATION: Only "Ajouter" and "Retirer" buttons
                     button_frame = tk.Frame(pieces_window)
                     button_frame.pack(fill=tk.X, pady=10)
                     
@@ -1141,8 +1113,6 @@ def open_gmao_interface():
                              bg="#4CAF50", fg="white").pack(side=tk.LEFT, padx=10)
                     tk.Button(button_frame, text="← Retirer", command=remove_piece, 
                              bg="#f44336", fg="white").pack(side=tk.LEFT, padx=10)
-                    tk.Button(button_frame, text="🔄 Rafraîchir", command=refresh_pieces_display, 
-                             bg="#FF9800", fg="white").pack(side=tk.LEFT, padx=10)
                     tk.Button(button_frame, text="Valider", command=save_selection, 
                              bg="#2196F3", fg="white").pack(side=tk.RIGHT, padx=10)
                     
