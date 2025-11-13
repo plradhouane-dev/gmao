@@ -7,16 +7,19 @@ from datetime import datetime, timedelta
 import threading
 import time
 from functools import partial
+import hashlib
 
 # === Global Variables ===
 root = None
 entry_serial = None
+current_user = None
 
 # === Configuration ===
 KEY_FILE = 'secret.key'
 DB_FILE = 'gmao_encrypted.db'
 INITIAL_PASSWORD = 'admin123'
 LOW_STOCK_THRESHOLD = 5
+MONETARY_SYMBOL = "TND"  # Changed from € to TND
 
 # === Window Manager ===
 class WindowManager:
@@ -164,10 +167,29 @@ def decrypt_data(token):
     f = Fernet(key)
     return f.decrypt(token).decode()
 
+def hash_password(password):
+    """Hash a password for storing."""
+    return hashlib.sha256(password.encode()).hexdigest()
+
 # === Database Initialization ===
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    
+    # Users table for multi-user system
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 username TEXT UNIQUE,
+                 password_hash TEXT,
+                 role TEXT DEFAULT 'user',
+                 first_login INTEGER DEFAULT 1,
+                 created_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
+    
+    # Check if admin user exists, create if not
+    c.execute("SELECT * FROM users WHERE username='admin'")
+    if not c.fetchone():
+        c.execute("INSERT INTO users (username, password_hash, role, first_login) VALUES (?, ?, ?, ?)",
+                 ('admin', hash_password(INITIAL_PASSWORD), 'admin', 1))
     
     # Equipment table
     c.execute('''CREATE TABLE IF NOT EXISTS equipements (
@@ -225,60 +247,124 @@ def init_db():
     conn.commit()
     conn.close()
 
-# === Authentication System ===
-def authentication():
-    def verify_password():
-        entered_password = entry_password.get()
-        if entered_password == INITIAL_PASSWORD:
-            auth_window.destroy()
-            open_gmao_interface()
-        else:
-            messagebox.showerror("Erreur", "Mot de passe incorrect")
-
-    auth_window = tk.Tk()
-    auth_window.title("Authentification - GMAO")
-    auth_window.geometry("400x300")
-    auth_window.resizable(False, False)
-    auth_window.configure(bg=ProfessionalTheme.PRIMARY)
+# === Password Change Function ===
+def force_password_change():
+    def save_new_password():
+        new_pass = entry_new_password.get()
+        confirm_pass = entry_confirm_password.get()
+        
+        if not new_pass or not confirm_pass:
+            messagebox.showerror("Erreur", "Veuillez saisir un mot de passe et le confirmer")
+            return
+        
+        if new_pass != confirm_pass:
+            messagebox.showerror("Erreur", "Les mots de passe ne correspondent pas")
+            return
+        
+        if len(new_pass) < 6:
+            messagebox.showerror("Erreur", "Le mot de passe doit contenir au moins 6 caractères")
+            return
+        
+        # Update password in database
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("UPDATE users SET password_hash=?, first_login=0 WHERE id=?",
+                  (hash_password(new_pass), current_user['id']))
+        conn.commit()
+        conn.close()
+        
+        messagebox.showinfo("Succès", "Mot de passe changé avec succès")
+        current_user['first_login'] = 0
+        password_window.destroy()
+        
+        # Call open_gmao_interface after a short delay to ensure proper window cleanup
+        password_window.after(100, open_gmao_interface)
+    
+    password_window = tk.Tk()
+    password_window.title("Changement de mot de passe")
+    password_window.geometry("500x350")  # Increased size
+    password_window.minsize(450, 300)     # Set minimum size
+    password_window.resizable(True, True)    # Make window resizable
+    
+    # Center window on screen
+    password_window.update_idletasks()
+    width = password_window.winfo_width()
+    height = password_window.winfo_height()
+    x = (password_window.winfo_screenwidth() // 2) - (width // 2)
+    y = (password_window.winfo_screenheight() // 2) - (height // 2)
+    password_window.geometry(f'{width}x{height}+{x}+{y}')
+    
+    password_window.configure(bg=ProfessionalTheme.PRIMARY)
     
     # Configure styles
     ProfessionalTheme.configure_styles()
     
-    # Main frame
-    main_frame = tk.Frame(auth_window, bg=ProfessionalTheme.PRIMARY)
-    main_frame.pack(fill=tk.BOTH, expand=True)
+    # Main frame with padding that adjusts to window size
+    main_frame = tk.Frame(password_window, bg=ProfessionalTheme.PRIMARY)
+    main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
     
     # Title
-    tk.Label(main_frame, text="GMAO System", font=("Segoe UI", 24, "bold"), 
-             bg=ProfessionalTheme.PRIMARY, fg=ProfessionalTheme.WHITE).pack(pady=(40, 10))
+    title_label = tk.Label(main_frame, text="Changement de mot de passe obligatoire", 
+                         font=("Segoe UI", 16, "bold"), bg=ProfessionalTheme.PRIMARY, 
+                         fg=ProfessionalTheme.WHITE)
+    title_label.pack(pady=(30, 20))
     
-    tk.Label(main_frame, text="Gestion de Maintenance Assistée par Ordinateur", 
-             font=("Segoe UI", 10), bg=ProfessionalTheme.PRIMARY, fg=ProfessionalTheme.LIGHT).pack(pady=(0, 30))
+    # Form with responsive layout
+    form_frame = tk.Frame(main_frame, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
+    form_frame.pack(fill=tk.BOTH, expand=True, pady=20)
     
-    # Login form
-    login_frame = tk.Frame(main_frame, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
-    login_frame.pack(pady=20, padx=40, fill=tk.BOTH, expand=True)
+    # New password section
+    new_pass_frame = tk.Frame(form_frame, bg=ProfessionalTheme.WHITE)
+    new_pass_frame.pack(fill=tk.X, padx=30, pady=(20, 5))
     
-    tk.Label(login_frame, text="Mot de passe :", font=("Segoe UI", 12), 
-             bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).pack(pady=(30, 10))
+    tk.Label(new_pass_frame, text="Nouveau mot de passe :", font=("Segoe UI", 12), 
+             bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).pack(anchor="w")
     
-    entry_password = tk.Entry(login_frame, show='*', font=("Segoe UI", 12), 
-                             bd=1, relief="solid", highlightthickness=0)
-    entry_password.pack(pady=10, padx=30, fill=tk.X)
-    entry_password.focus()
+    entry_new_password = tk.Entry(new_pass_frame, show='*', font=("Segoe UI", 12), 
+                                 bd=1, relief="solid", highlightthickness=0)
+    entry_new_password.pack(fill=tk.X, pady=(5, 0))
+    entry_new_password.focus()
     
-    button_frame = tk.Frame(login_frame, bg=ProfessionalTheme.WHITE)
-    button_frame.pack(pady=20)
+    # Confirm password section
+    confirm_pass_frame = tk.Frame(form_frame, bg=ProfessionalTheme.WHITE)
+    confirm_pass_frame.pack(fill=tk.X, padx=30, pady=(15, 5))
     
-    login_button = tk.Button(button_frame, text="Se connecter", command=verify_password, 
-                            font=("Segoe UI", 10, "bold"), bg=ProfessionalTheme.PRIMARY, 
-                            fg=ProfessionalTheme.WHITE, bd=0, padx=30, pady=8, 
-                            activebackground=ProfessionalTheme.SECONDARY)
-    login_button.pack()
+    tk.Label(confirm_pass_frame, text="Confirmer le mot de passe :", font=("Segoe UI", 12), 
+             bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).pack(anchor="w")
     
-    entry_password.bind('<Return>', lambda event: verify_password())
-    auth_window.mainloop()
-
+    entry_confirm_password = tk.Entry(confirm_pass_frame, show='*', font=("Segoe UI", 12), 
+                                     bd=1, relief="solid", highlightthickness=0)
+    entry_confirm_password.pack(fill=tk.X, pady=(5, 0))
+    
+    # Button frame with responsive positioning
+    button_frame = tk.Frame(form_frame, bg=ProfessionalTheme.WHITE)
+    button_frame.pack(fill=tk.X, padx=30, pady=20)
+    
+    save_button = tk.Button(button_frame, text="Enregistrer", command=save_new_password, 
+                           font=("Segoe UI", 10, "bold"), bg=ProfessionalTheme.SUCCESS, 
+                           fg=ProfessionalTheme.WHITE, bd=0, padx=30, pady=10, 
+                           activebackground='#229954', cursor="hand2")
+    save_button.pack()
+    
+    # Add some padding at the bottom
+    bottom_padding = tk.Frame(form_frame, bg=ProfessionalTheme.WHITE, height=20)
+    bottom_padding.pack(fill=tk.X)
+    
+    # Bind Enter key to save
+    entry_new_password.bind('<Return>', lambda event: entry_confirm_password.focus())
+    entry_confirm_password.bind('<Return>', lambda event: save_new_password())
+    
+    # Add window resize handler to adjust font sizes if needed
+    def on_resize(event):
+        # Optional: Adjust font sizes based on window width
+        if event.width < 450:
+            title_label.config(font=("Segoe UI", 14, "bold"))
+        else:
+            title_label.config(font=("Segoe UI", 16, "bold"))
+    
+    password_window.bind('<Configure>', on_resize)
+    
+    password_window.mainloop()
 # === Maintenance Reminder System ===
 def check_reminders(root):
     def run_check():
@@ -314,13 +400,143 @@ def check_reminders(root):
     reminder_thread = threading.Thread(target=run_check, daemon=True)
     reminder_thread.start()
 
+# === Authentication System ===
+def authentication():
+    def verify_password():
+        username = entry_username.get().strip()
+        entered_password = entry_password.get()
+        
+        if not username or not entered_password:
+            messagebox.showerror("Erreur", "Veuillez saisir un nom d'utilisateur et un mot de passe")
+            return
+        
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT id, username, password_hash, role, first_login FROM users WHERE username=?", (username,))
+        user = c.fetchone()
+        conn.close()
+        
+        if user and user[2] == hash_password(entered_password):
+            global current_user
+            current_user = {
+                'id': user[0],
+                'username': user[1],
+                'role': user[3],
+                'first_login': user[4]
+            }
+            
+            auth_window.destroy()
+            
+            # Check if first login, require password change
+            if current_user['first_login']:
+                force_password_change()
+            else:
+                open_gmao_interface()
+        else:
+            messagebox.showerror("Erreur", "Nom d'utilisateur ou mot de passe incorrect")
+
+    auth_window = tk.Tk()
+    auth_window.title("Authentification - GMAO")
+    auth_window.geometry("450x400")  # Increased default size
+    auth_window.minsize(400, 350)    # Set minimum size
+    auth_window.maxsize(600, 500)    # Set maximum size
+    auth_window.resizable(True, True)  # Make window resizable
+    
+    # Center window on screen
+    auth_window.update_idletasks()
+    width = auth_window.winfo_width()
+    height = auth_window.winfo_height()
+    x = (auth_window.winfo_screenwidth() // 2) - (width // 2)
+    y = (auth_window.winfo_screenheight() // 2) - (height // 2)
+    auth_window.geometry(f'{width}x{height}+{x}+{y}')
+    
+    auth_window.configure(bg=ProfessionalTheme.PRIMARY)
+    
+    # Configure styles
+    ProfessionalTheme.configure_styles()
+    
+    # Main frame with padding that adjusts to window size
+    main_frame = tk.Frame(auth_window, bg=ProfessionalTheme.PRIMARY)
+    main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+    
+    # Title with dynamic font size based on window size
+    title_label = tk.Label(main_frame, text="GMAO System", font=("Segoe UI", 24, "bold"), 
+                          bg=ProfessionalTheme.PRIMARY, fg=ProfessionalTheme.WHITE)
+    title_label.pack(pady=(30, 10))
+    
+    subtitle_label = tk.Label(main_frame, text="Gestion de Maintenance Assistée par Ordinateur", 
+                             font=("Segoe UI", 10), bg=ProfessionalTheme.PRIMARY, 
+                             fg=ProfessionalTheme.LIGHT)
+    subtitle_label.pack(pady=(0, 20))
+    
+    # Login form with responsive layout
+    login_frame = tk.Frame(main_frame, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
+    login_frame.pack(fill=tk.BOTH, expand=True, pady=20)
+    
+    # Username section
+    username_frame = tk.Frame(login_frame, bg=ProfessionalTheme.WHITE)
+    username_frame.pack(fill=tk.X, padx=30, pady=(20, 5))
+    
+    tk.Label(username_frame, text="Nom d'utilisateur :", font=("Segoe UI", 12), 
+             bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).pack(anchor="w")
+    
+    entry_username = tk.Entry(username_frame, font=("Segoe UI", 12), 
+                            bd=1, relief="solid", highlightthickness=0)
+    entry_username.pack(fill=tk.X, pady=(5, 0))
+    entry_username.insert(0, "admin")  # Default to admin for convenience
+    
+    # Password section
+    password_frame = tk.Frame(login_frame, bg=ProfessionalTheme.WHITE)
+    password_frame.pack(fill=tk.X, padx=30, pady=(15, 5))
+    
+    tk.Label(password_frame, text="Mot de passe :", font=("Segoe UI", 12), 
+             bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).pack(anchor="w")
+    
+    entry_password = tk.Entry(password_frame, show='*', font=("Segoe UI", 12), 
+                             bd=1, relief="solid", highlightthickness=0)
+    entry_password.pack(fill=tk.X, pady=(5, 0))
+    entry_password.focus()
+    
+    # Button frame with responsive positioning
+    button_frame = tk.Frame(login_frame, bg=ProfessionalTheme.WHITE)
+    button_frame.pack(fill=tk.X, padx=30, pady=20)
+    
+    login_button = tk.Button(button_frame, text="Se connecter", command=verify_password, 
+                            font=("Segoe UI", 10, "bold"), bg=ProfessionalTheme.PRIMARY, 
+                            fg=ProfessionalTheme.WHITE, bd=0, padx=30, pady=10, 
+                            activebackground=ProfessionalTheme.SECONDARY,
+                            cursor="hand2")  # Add hand cursor
+    login_button.pack()
+    
+    # Add some padding at the bottom
+    bottom_padding = tk.Frame(login_frame, bg=ProfessionalTheme.WHITE, height=20)
+    bottom_padding.pack(fill=tk.X)
+    
+    # Bind Enter key to login
+    entry_password.bind('<Return>', lambda event: verify_password())
+    entry_username.bind('<Return>', lambda event: entry_password.focus())
+    
+    # Add window resize handler to adjust font sizes if needed
+    def on_resize(event):
+        # Optional: Adjust font sizes based on window width
+        if event.width < 450:
+            title_label.config(font=("Segoe UI", 20, "bold"))
+            subtitle_label.config(font=("Segoe UI", 9))
+        else:
+            title_label.config(font=("Segoe UI", 24, "bold"))
+            subtitle_label.config(font=("Segoe UI", 10))
+    
+    auth_window.bind('<Configure>', on_resize)
+    
+    auth_window.mainloop()
+
 # === Main GMAO Interface ===
 def open_gmao_interface():
     global root, entry_serial
     
     # Main application window
     root = tk.Tk()
-    root.title("🔧 Système GMAO - Gestion de Maintenance Assistée par Ordinateur")
+    root.title(f"🔧 Système GMAO - {current_user['username']}")
     root.geometry("900x700")
     root.minsize(800, 600)
     root.configure(bg=ProfessionalTheme.LIGHT)
@@ -339,6 +555,19 @@ def open_gmao_interface():
     tk.Label(header_frame, text="Gestion de Maintenance Assistée par Ordinateur", 
              font=ProfessionalTheme.BODY_FONT, fg=ProfessionalTheme.LIGHT, 
              bg=ProfessionalTheme.PRIMARY).pack(side=tk.LEFT, padx=(0, 20), pady=20)
+    
+    # User info and logout
+    user_frame = tk.Frame(header_frame, bg=ProfessionalTheme.PRIMARY)
+    user_frame.pack(side=tk.RIGHT, padx=20, pady=15)
+    
+    tk.Label(user_frame, text=f"Utilisateur: {current_user['username']}", 
+             font=ProfessionalTheme.BODY_FONT, fg=ProfessionalTheme.WHITE, 
+             bg=ProfessionalTheme.PRIMARY).pack(side=tk.LEFT, padx=(0, 15))
+    
+    logout_button = tk.Button(user_frame, text="Déconnexion", command=logout, 
+                             font=ProfessionalTheme.BODY_FONT, bg=ProfessionalTheme.DANGER, 
+                             fg=ProfessionalTheme.WHITE, bd=0, padx=10, pady=5)
+    logout_button.pack(side=tk.LEFT)
     
     # Main container
     main_container = tk.Frame(root, bg=ProfessionalTheme.LIGHT)
@@ -360,12 +589,18 @@ def open_gmao_interface():
     entry_serial.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
     entry_serial.focus()
     
-    # Stock Management Button
-    stock_button_frame = tk.Frame(main_container, bg=ProfessionalTheme.LIGHT)
-    stock_button_frame.pack(fill=tk.X, pady=(0, 20))
+    # Management buttons frame
+    buttons_frame = tk.Frame(main_container, bg=ProfessionalTheme.LIGHT)
+    buttons_frame.pack(fill=tk.X, pady=(0, 20))
     
-    ttk.Button(stock_button_frame, text="📦 Gestion des Pièces de Rechange", 
-              command=open_parts_management, style="Warning.TButton").pack(fill=tk.X)
+    # Stock Management Button
+    ttk.Button(buttons_frame, text="📦 Gestion des Pièces de Rechange", 
+              command=open_parts_management, style="Warning.TButton").pack(side=tk.LEFT, padx=(0, 10))
+    
+    # Profile Management Button (only for admin)
+    if current_user['role'] == 'admin':
+        ttk.Button(buttons_frame, text="👤 Gestion des Profils", 
+                  command=open_profile_management, style="Primary.TButton").pack(side=tk.LEFT)
     
     # Footer
     footer_frame = tk.Frame(root, bg=ProfessionalTheme.PRIMARY, height=40)
@@ -384,6 +619,216 @@ def open_gmao_interface():
     
     # Run main loop
     root.mainloop()
+
+def logout():
+    global current_user
+    current_user = None
+    root.destroy()
+    authentication()
+
+def open_profile_management():
+    def create_profile_window():
+        profile_window = tk.Toplevel(root)
+        profile_window.title("👤 Gestion des Profils Utilisateurs")
+        profile_window.geometry("900x600")
+        profile_window.configure(bg=ProfessionalTheme.LIGHT)
+        
+        # Configure styles
+        ProfessionalTheme.configure_styles()
+        
+        # Header
+        header_frame = tk.Frame(profile_window, bg=ProfessionalTheme.PRIMARY, height=60)
+        header_frame.pack(fill=tk.X)
+        header_frame.pack_propagate(False)
+        
+        tk.Label(header_frame, text="Gestion des Profils Utilisateurs", 
+                font=ProfessionalTheme.TITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
+                fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=15)
+        
+        # Main container
+        main_container = tk.Frame(profile_window, bg=ProfessionalTheme.LIGHT)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Button frame
+        button_frame = tk.Frame(main_container, bg=ProfessionalTheme.LIGHT)
+        button_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Users Table
+        table_frame = tk.Frame(main_container, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
+        table_frame.pack(fill=tk.BOTH, expand=True)
+        
+        columns = ("ID", "Nom d'utilisateur", "Rôle", "Première connexion", "Date de création")
+        tree_users = ttk.Treeview(table_frame, columns=columns, show="headings", height=18)
+        for col in columns:
+            tree_users.heading(col, text=col)
+            tree_users.column(col, width=(50 if col == "ID" else 150))
+        tree_users.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=tree_users.yview)
+        tree_users.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        def refresh_users():
+            for item in tree_users.get_children():
+                tree_users.delete(item)
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT id, username, role, first_login, created_at FROM users ORDER BY username")
+            rows = c.fetchall()
+            conn.close()
+            for row in rows:
+                first_login_text = "Oui" if row[3] else "Non"
+                tree_users.insert("", tk.END, values=(row[0], row[1], row[2], first_login_text, row[4]))
+        
+        def add_user():
+            add_window = tk.Toplevel(profile_window)
+            add_window.title("Ajouter un utilisateur")
+            add_window.geometry("500x400")
+            add_window.configure(bg=ProfessionalTheme.LIGHT)
+            
+            # Header
+            header_frame = tk.Frame(add_window, bg=ProfessionalTheme.PRIMARY, height=50)
+            header_frame.pack(fill=tk.X)
+            header_frame.pack_propagate(False)
+            
+            tk.Label(header_frame, text="Ajouter un nouvel utilisateur", 
+                    font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
+                    fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
+            
+            # Form container
+            form_container = tk.Frame(add_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
+            form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+            
+            fields = [
+                ("Nom d'utilisateur *:", "username"),
+                ("Mot de passe *:", "password"),
+                ("Rôle *:", "role")
+            ]
+            entries = {}
+            for i, (label, key) in enumerate(fields):
+                tk.Label(form_container, text=label, font=ProfessionalTheme.BODY_FONT, 
+                        bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                    row=i, column=0, sticky="w", padx=20, pady=12)
+                
+                if key == "role":
+                    entry = ttk.Combobox(form_container, values=["admin", "user"], state="readonly")
+                    entry.set("user")
+                else:
+                    entry = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                                   bd=1, relief="solid", highlightthickness=0, 
+                                   show='*' if key == "password" else None)
+                
+                entry.grid(row=i, column=1, padx=20, pady=12, sticky="ew")
+                entries[key] = entry
+            
+            def save_user():
+                username = entries["username"].get().strip()
+                password = entries["password"].get().strip()
+                role = entries["role"].get()
+                
+                if not username or not password:
+                    messagebox.showwarning("Attention", "Nom d'utilisateur et mot de passe sont obligatoires")
+                    return
+                
+                if len(password) < 6:
+                    messagebox.showwarning("Attention", "Le mot de passe doit contenir au moins 6 caractères")
+                    return
+                
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                try:
+                    c.execute('''INSERT INTO users (username, password_hash, role, first_login)
+                                 VALUES (?, ?, ?, ?)''', 
+                              (username, hash_password(password), role, 1))
+                    conn.commit()
+                    messagebox.showinfo("Succès", "Utilisateur ajouté avec succès.")
+                    add_window.destroy()
+                    refresh_users()
+                except sqlite3.IntegrityError:
+                    messagebox.showerror("Erreur", "Un utilisateur avec ce nom existe déjà.")
+                finally:
+                    conn.close()
+            
+            button_frame = tk.Frame(form_container, bg=ProfessionalTheme.WHITE)
+            button_frame.grid(row=len(fields), column=0, columnspan=2, pady=20)
+            
+            ttk.Button(button_frame, text="Sauvegarder", command=save_user, 
+                      style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
+            ttk.Button(button_frame, text="Annuler", command=add_window.destroy, 
+                      style="Danger.TButton").pack(side=tk.LEFT)
+            
+            form_container.columnconfigure(1, weight=1)
+        
+        def reset_password():
+            selected = tree_users.selection()
+            if not selected:
+                messagebox.showwarning("Attention", "Sélectionnez un utilisateur")
+                return
+            
+            values = tree_users.item(selected[0], 'values')
+            user_id = values[0]
+            username = values[1]
+            
+            if username == current_user['username']:
+                messagebox.showwarning("Attention", "Vous ne pouvez pas réinitialiser votre propre mot de passe ici")
+                return
+            
+            if not messagebox.askyesno("Confirmation", f"Voulez-vous réinitialiser le mot de passe de '{username}' ?\nL'utilisateur devra le changer à la prochaine connexion."):
+                return
+            
+            # Reset password to initial password and set first_login flag
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("UPDATE users SET password_hash=?, first_login=1 WHERE id=?",
+                     (hash_password(INITIAL_PASSWORD), user_id))
+            conn.commit()
+            conn.close()
+            
+            messagebox.showinfo("Succès", f"Mot de passe de '{username}' réinitialisé. Le mot de passe temporaire est '{INITIAL_PASSWORD}'")
+            refresh_users()
+        
+        def delete_user():
+            selected = tree_users.selection()
+            if not selected:
+                messagebox.showwarning("Attention", "Sélectionnez un utilisateur")
+                return
+            
+            values = tree_users.item(selected[0], 'values')
+            user_id = values[0]
+            username = values[1]
+            
+            if username == current_user['username']:
+                messagebox.showwarning("Attention", "Vous ne pouvez pas supprimer votre propre compte")
+                return
+            
+            if not messagebox.askyesno("Confirmation", f"Voulez-vous vraiment supprimer l'utilisateur '{username}' ?"):
+                return
+            
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("DELETE FROM users WHERE id=?", (user_id,))
+            conn.commit()
+            conn.close()
+            
+            messagebox.showinfo("Succès", f"Utilisateur '{username}' supprimé avec succès")
+            refresh_users()
+        
+        # Add buttons after defining all functions
+        ttk.Button(button_frame, text="➕ Ajouter un utilisateur", command=add_user, 
+                  style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="🔄 Réinitialiser mot de passe", command=reset_password, 
+                  style="Warning.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="🗑 Supprimer", command=delete_user, 
+                  style="Danger.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="🔄 Rafraîchir", command=refresh_users, 
+                  style="Primary.TButton").pack(side=tk.LEFT)
+        
+        refresh_users()
+        
+        return profile_window
+    
+    # Use the window manager to open/create the window
+    return window_manager.open_window("profile_management", create_profile_window)
 
 def open_parts_management():
     def create_stock_window():
@@ -416,7 +861,7 @@ def open_parts_management():
         table_frame = tk.Frame(main_container, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
         table_frame.pack(fill=tk.BOTH, expand=True)
         
-        columns = ("ID", "Nom", "Référence", "Fournisseur", "Prix", "Quantité", "Description")
+        columns = ("ID", "Nom", "Référence", "Fournisseur", f"Prix ({MONETARY_SYMBOL})", "Quantité", "Description")
         tree_parts = ttk.Treeview(table_frame, columns=columns, show="headings", height=18)
         for col in columns:
             tree_parts.heading(col, text=col)
@@ -461,7 +906,7 @@ def open_parts_management():
                 ("Nom *:", "name"),
                 ("Référence *:", "ref"),
                 ("Fournisseur:", "supplier"),
-                ("Prix unitaire:", "price"),
+                (f"Prix unitaire ({MONETARY_SYMBOL}):", "price"),
                 ("Quantité en stock:", "quantity"),
             ]
             entries = {}
@@ -556,7 +1001,7 @@ def open_parts_management():
             conn.close()
             
             fields = [("Nom:", row[0]), ("Référence:", row[1]), ("Fournisseur:", row[2]), 
-                      ("Prix unitaire:", row[3]), ("Quantité:", row[4])]
+                      (f"Prix unitaire ({MONETARY_SYMBOL}):", row[3]), ("Quantité:", row[4])]
             entries = {}
             for i, (label, value) in enumerate(fields):
                 tk.Label(form_container, text=label, font=ProfessionalTheme.BODY_FONT, 
@@ -870,7 +1315,7 @@ def show_equipment_history(equipment_id, serial_number):
         table_frame = tk.Frame(repairs_frame, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
         table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
         
-        columns = ("ID", "Date Entrée", "Date Sortie", "Technicien", "Coût", "Détails")
+        columns = ("ID", "Date Entrée", "Date Sortie", "Technicien", f"Coût ({MONETARY_SYMBOL})", "Détails")
         tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=12)
         for col in columns:
             tree.heading(col, text=col)
@@ -934,7 +1379,7 @@ def show_equipment_history(equipment_id, serial_number):
             tk.Label(left_frame, text="Pièces disponibles", font=ProfessionalTheme.SUBTITLE_FONT, 
                     bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY).pack(pady=10)
             
-            cols = ("ID", "Nom", "Réf", "Prix", "Stock")
+            cols = ("ID", "Nom", "Réf", f"Prix ({MONETARY_SYMBOL})", "Stock")
             tree_left = ttk.Treeview(left_frame, columns=cols, show="headings", height=15)
             for col in cols:
                 tree_left.heading(col, text=col)
@@ -948,7 +1393,7 @@ def show_equipment_history(equipment_id, serial_number):
             tk.Label(right_frame, text="Pièces sélectionnées", font=ProfessionalTheme.SUBTITLE_FONT, 
                     bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY).pack(pady=10)
             
-            cols2 = ("Piece ID", "Nom", "Quantité", "Prix unitaire", "Coût total")
+            cols2 = ("Piece ID", "Nom", "Quantité", f"Prix unitaire ({MONETARY_SYMBOL})", f"Coût total ({MONETARY_SYMBOL})")
             tree_right = ttk.Treeview(right_frame, columns=cols2, show="headings", height=15)
             for col in cols2:
                 tree_right.heading(col, text=col)
@@ -1128,7 +1573,7 @@ def show_equipment_history(equipment_id, serial_number):
                     ("Date d'entrée:", intervention[0]),
                     ("Date de sortie:", intervention[1] or "N/A"),
                     ("Technicien:", intervention[2] or "N/A"),
-                    ("Coût total:", f"{intervention[3]:.2f} €")
+                    (f"Coût total ({MONETARY_SYMBOL}):", f"{intervention[3]:.2f} {MONETARY_SYMBOL}")
                 ]
                 
                 for i, (label, value) in enumerate(basic_info):
@@ -1160,7 +1605,7 @@ def show_equipment_history(equipment_id, serial_number):
                     pieces_frame = tk.Frame(details_container, bg=ProfessionalTheme.WHITE)
                     pieces_frame.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 20), padx=20)
                     
-                    pieces_cols = ("Nom", "Quantité", "Prix unitaire", "Coût total")
+                    pieces_cols = ("Nom", "Quantité", f"Prix unitaire ({MONETARY_SYMBOL})", f"Coût total ({MONETARY_SYMBOL})")
                     pieces_tree = ttk.Treeview(pieces_frame, columns=pieces_cols, show="headings", height=6)
                     for col in pieces_cols:
                         pieces_tree.heading(col, text=col)
@@ -1222,7 +1667,7 @@ def show_equipment_history(equipment_id, serial_number):
                                           bd=1, relief="solid", highlightthickness=0)
                 entry_technician.grid(row=2, column=1, padx=20, pady=12, sticky="ew")
                 
-                tk.Label(form_container, text="Coût:", font=ProfessionalTheme.BODY_FONT, 
+                tk.Label(form_container, text=f"Coût ({MONETARY_SYMBOL}):", font=ProfessionalTheme.BODY_FONT, 
                         bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
                     row=3, column=0, sticky="w", padx=20, pady=12)
                 entry_cost = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
@@ -1401,7 +1846,7 @@ def show_equipment_history(equipment_id, serial_number):
                 entry_technician.grid(row=2, column=1, padx=20, pady=12, sticky="ew")
                 entry_technician.insert(0, intervention[2] or "")
                 
-                tk.Label(form_container, text="Coût:", font=ProfessionalTheme.BODY_FONT, 
+                tk.Label(form_container, text=f"Coût ({MONETARY_SYMBOL}):", font=ProfessionalTheme.BODY_FONT, 
                         bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
                     row=3, column=0, sticky="w", padx=20, pady=12)
                 entry_cost = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
@@ -1526,7 +1971,7 @@ def show_equipment_history(equipment_id, serial_number):
                         tk.Label(left_frame, text="Pièces disponibles", font=ProfessionalTheme.SUBTITLE_FONT, 
                                 bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY).pack(pady=10)
                         
-                        cols = ("ID", "Nom", "Réf", "Prix", "Stock")
+                        cols = ("ID", "Nom", "Réf", f"Prix ({MONETARY_SYMBOL})", "Stock")
                         tree_left = ttk.Treeview(left_frame, columns=cols, show="headings", height=15)
                         for col in cols:
                             tree_left.heading(col, text=col)
@@ -1540,7 +1985,7 @@ def show_equipment_history(equipment_id, serial_number):
                         tk.Label(right_frame, text="Pièces sélectionnées", font=ProfessionalTheme.SUBTITLE_FONT, 
                                 bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY).pack(pady=10)
                         
-                        cols2 = ("Piece ID", "Nom", "Quantité", "Prix unitaire", "Coût total")
+                        cols2 = ("Piece ID", "Nom", "Quantité", f"Prix unitaire ({MONETARY_SYMBOL})", f"Coût total ({MONETARY_SYMBOL})")
                         tree_right = ttk.Treeview(right_frame, columns=cols2, show="headings", height=15)
                         for col in cols2:
                             tree_right.heading(col, text=col)
