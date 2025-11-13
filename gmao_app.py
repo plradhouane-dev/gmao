@@ -19,7 +19,7 @@ KEY_FILE = 'secret.key'
 DB_FILE = 'gmao_encrypted.db'
 INITIAL_PASSWORD = 'admin123'
 LOW_STOCK_THRESHOLD = 5
-MONETARY_SYMBOL = "TND"  # Changed from € to TND
+MONETARY_SYMBOL = "TND"
 
 # === Window Manager ===
 class WindowManager:
@@ -28,16 +28,13 @@ class WindowManager:
     
     def open_window(self, window_name, create_window_func, *args, **kwargs):
         if window_name in self.windows and self.windows[window_name].winfo_exists():
-            # Window already exists, bring it to focus
             self.windows[window_name].lift()
             self.windows[window_name].focus_force()
             return self.windows[window_name]
         else:
-            # Create new window
             window = create_window_func(*args, **kwargs)
             self.windows[window_name] = window
             
-            # Clean up when window is closed
             def on_close():
                 if window_name in self.windows:
                     del self.windows[window_name]
@@ -46,23 +43,20 @@ class WindowManager:
             window.protocol("WM_DELETE_WINDOW", on_close)
             return window
 
-# Create a global window manager instance
 window_manager = WindowManager()
 
 # === Professional UI Theme ===
 class ProfessionalTheme:
-    # Color Palette
-    PRIMARY = "#2c3e50"      # Dark blue-gray
-    SECONDARY = "#3498db"     # Blue
-    SUCCESS = "#27ae60"       # Green
-    WARNING = "#f39c12"       # Orange
-    DANGER = "#e74c3c"        # Red
-    LIGHT = "#ecf0f1"         # Light gray
-    DARK = "#2c3e50"          # Dark
-    WHITE = "#ffffff"         # White
-    GRAY = "#95a5a6"          # Medium gray
+    PRIMARY = "#2c3e50"
+    SECONDARY = "#3498db"
+    SUCCESS = "#27ae60"
+    WARNING = "#f39c12"
+    DANGER = "#e74c3c"
+    LIGHT = "#ecf0f1"
+    DARK = "#2c3e50"
+    WHITE = "#ffffff"
+    GRAY = "#95a5a6"
     
-    # Fonts
     FONT_FAMILY = "Segoe UI"
     TITLE_FONT = (FONT_FAMILY, 16, "bold")
     SUBTITLE_FONT = (FONT_FAMILY, 12, "bold")
@@ -74,7 +68,6 @@ class ProfessionalTheme:
         style = ttk.Style()
         style.theme_use('clam')
         
-        # Configure button styles
         style.configure("Primary.TButton", 
                         background=ProfessionalTheme.PRIMARY,
                         foreground=ProfessionalTheme.WHITE,
@@ -110,41 +103,6 @@ class ProfessionalTheme:
                         font=ProfessionalTheme.BUTTON_FONT)
         style.map("Danger.TButton",
                  background=[('active', '#c0392b')])
-        
-        # Configure frame styles
-        style.configure("Card.TFrame", 
-                        background=ProfessionalTheme.WHITE,
-                        relief="raised",
-                        borderwidth=1)
-        
-        # Configure label styles
-        style.configure("Title.TLabel", 
-                        background=ProfessionalTheme.PRIMARY,
-                        foreground=ProfessionalTheme.WHITE,
-                        font=ProfessionalTheme.TITLE_FONT)
-        
-        style.configure("CardTitle.TLabel", 
-                        background=ProfessionalTheme.WHITE,
-                        foreground=ProfessionalTheme.PRIMARY,
-                        font=ProfessionalTheme.SUBTITLE_FONT)
-        
-        # Configure entry styles
-        style.configure("Card.TEntry", 
-                        fieldbackground=ProfessionalTheme.WHITE,
-                        borderwidth=1,
-                        relief="solid")
-        
-        # Configure treeview styles
-        style.configure("Treeview",
-                        background=ProfessionalTheme.WHITE,
-                        foreground=ProfessionalTheme.DARK,
-                        fieldbackground=ProfessionalTheme.WHITE,
-                        borderwidth=1,
-                        relief="solid")
-        style.configure("Treeview.Heading",
-                        background=ProfessionalTheme.PRIMARY,
-                        foreground=ProfessionalTheme.WHITE,
-                        font=ProfessionalTheme.SUBTITLE_FONT)
 
 # === Encryption Functions ===
 def load_key():
@@ -168,7 +126,6 @@ def decrypt_data(token):
     return f.decrypt(token).decode()
 
 def hash_password(password):
-    """Hash a password for storing."""
     return hashlib.sha256(password.encode()).hexdigest()
 
 # === Database Initialization ===
@@ -176,7 +133,7 @@ def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     
-    # Users table for multi-user system
+    # Users table
     c.execute('''CREATE TABLE IF NOT EXISTS users (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
                  username TEXT UNIQUE,
@@ -185,11 +142,34 @@ def init_db():
                  first_login INTEGER DEFAULT 1,
                  created_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
     
-    # Check if admin user exists, create if not
+    # Permissions table
+    c.execute('''CREATE TABLE IF NOT EXISTS permissions (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 user_id INTEGER,
+                 can_view_interventions INTEGER DEFAULT 1,
+                 can_add_interventions INTEGER DEFAULT 0,
+                 can_edit_interventions INTEGER DEFAULT 0,
+                 can_delete_interventions INTEGER DEFAULT 0,
+                 can_view_stock INTEGER DEFAULT 1,
+                 can_add_stock INTEGER DEFAULT 0,
+                 can_edit_stock INTEGER DEFAULT 0,
+                 can_delete_stock INTEGER DEFAULT 0,
+                 can_manage_users INTEGER DEFAULT 0,
+                 FOREIGN KEY(user_id) REFERENCES users(id))''')
+    
+    # Check if admin user exists
     c.execute("SELECT * FROM users WHERE username='admin'")
     if not c.fetchone():
         c.execute("INSERT INTO users (username, password_hash, role, first_login) VALUES (?, ?, ?, ?)",
                  ('admin', hash_password(INITIAL_PASSWORD), 'admin', 1))
+        
+        c.execute("SELECT id FROM users WHERE username='admin'")
+        admin_id = c.fetchone()[0]
+        c.execute('''INSERT INTO permissions 
+                    (user_id, can_view_interventions, can_add_interventions, can_edit_interventions, 
+                     can_delete_interventions, can_view_stock, can_add_stock, can_edit_stock, 
+                     can_delete_stock, can_manage_users) 
+                    VALUES (?, 1, 1, 1, 1, 1, 1, 1, 1, 1)''', (admin_id,))
     
     # Equipment table
     c.execute('''CREATE TABLE IF NOT EXISTS equipements (
@@ -247,158 +227,54 @@ def init_db():
     conn.commit()
     conn.close()
 
-# === Password Change Function ===
-def force_password_change():
-    def save_new_password():
-        new_pass = entry_new_password.get()
-        confirm_pass = entry_confirm_password.get()
+# === Permission Management ===
+def get_user_permissions(user_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    c.execute("SELECT * FROM permissions WHERE user_id=?", (user_id,))
+    permissions = c.fetchone()
+    
+    if not permissions:
+        c.execute("SELECT role FROM users WHERE id=?", (user_id,))
+        role = c.fetchone()[0]
         
-        if not new_pass or not confirm_pass:
-            messagebox.showerror("Erreur", "Veuillez saisir un mot de passe et le confirmer")
-            return
-        
-        if new_pass != confirm_pass:
-            messagebox.showerror("Erreur", "Les mots de passe ne correspondent pas")
-            return
-        
-        if len(new_pass) < 6:
-            messagebox.showerror("Erreur", "Le mot de passe doit contenir au moins 6 caractères")
-            return
-        
-        # Update password in database
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        c.execute("UPDATE users SET password_hash=?, first_login=0 WHERE id=?",
-                  (hash_password(new_pass), current_user['id']))
-        conn.commit()
-        conn.close()
-        
-        messagebox.showinfo("Succès", "Mot de passe changé avec succès")
-        current_user['first_login'] = 0
-        password_window.destroy()
-        
-        # Call open_gmao_interface after a short delay to ensure proper window cleanup
-        password_window.after(100, open_gmao_interface)
-    
-    password_window = tk.Tk()
-    password_window.title("Changement de mot de passe")
-    password_window.geometry("500x350")  # Increased size
-    password_window.minsize(450, 300)     # Set minimum size
-    password_window.resizable(True, True)    # Make window resizable
-    
-    # Center window on screen
-    password_window.update_idletasks()
-    width = password_window.winfo_width()
-    height = password_window.winfo_height()
-    x = (password_window.winfo_screenwidth() // 2) - (width // 2)
-    y = (password_window.winfo_screenheight() // 2) - (height // 2)
-    password_window.geometry(f'{width}x{height}+{x}+{y}')
-    
-    password_window.configure(bg=ProfessionalTheme.PRIMARY)
-    
-    # Configure styles
-    ProfessionalTheme.configure_styles()
-    
-    # Main frame with padding that adjusts to window size
-    main_frame = tk.Frame(password_window, bg=ProfessionalTheme.PRIMARY)
-    main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-    
-    # Title
-    title_label = tk.Label(main_frame, text="Changement de mot de passe obligatoire", 
-                         font=("Segoe UI", 16, "bold"), bg=ProfessionalTheme.PRIMARY, 
-                         fg=ProfessionalTheme.WHITE)
-    title_label.pack(pady=(30, 20))
-    
-    # Form with responsive layout
-    form_frame = tk.Frame(main_frame, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
-    form_frame.pack(fill=tk.BOTH, expand=True, pady=20)
-    
-    # New password section
-    new_pass_frame = tk.Frame(form_frame, bg=ProfessionalTheme.WHITE)
-    new_pass_frame.pack(fill=tk.X, padx=30, pady=(20, 5))
-    
-    tk.Label(new_pass_frame, text="Nouveau mot de passe :", font=("Segoe UI", 12), 
-             bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).pack(anchor="w")
-    
-    entry_new_password = tk.Entry(new_pass_frame, show='*', font=("Segoe UI", 12), 
-                                 bd=1, relief="solid", highlightthickness=0)
-    entry_new_password.pack(fill=tk.X, pady=(5, 0))
-    entry_new_password.focus()
-    
-    # Confirm password section
-    confirm_pass_frame = tk.Frame(form_frame, bg=ProfessionalTheme.WHITE)
-    confirm_pass_frame.pack(fill=tk.X, padx=30, pady=(15, 5))
-    
-    tk.Label(confirm_pass_frame, text="Confirmer le mot de passe :", font=("Segoe UI", 12), 
-             bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).pack(anchor="w")
-    
-    entry_confirm_password = tk.Entry(confirm_pass_frame, show='*', font=("Segoe UI", 12), 
-                                     bd=1, relief="solid", highlightthickness=0)
-    entry_confirm_password.pack(fill=tk.X, pady=(5, 0))
-    
-    # Button frame with responsive positioning
-    button_frame = tk.Frame(form_frame, bg=ProfessionalTheme.WHITE)
-    button_frame.pack(fill=tk.X, padx=30, pady=20)
-    
-    save_button = tk.Button(button_frame, text="Enregistrer", command=save_new_password, 
-                           font=("Segoe UI", 10, "bold"), bg=ProfessionalTheme.SUCCESS, 
-                           fg=ProfessionalTheme.WHITE, bd=0, padx=30, pady=10, 
-                           activebackground='#229954', cursor="hand2")
-    save_button.pack()
-    
-    # Add some padding at the bottom
-    bottom_padding = tk.Frame(form_frame, bg=ProfessionalTheme.WHITE, height=20)
-    bottom_padding.pack(fill=tk.X)
-    
-    # Bind Enter key to save
-    entry_new_password.bind('<Return>', lambda event: entry_confirm_password.focus())
-    entry_confirm_password.bind('<Return>', lambda event: save_new_password())
-    
-    # Add window resize handler to adjust font sizes if needed
-    def on_resize(event):
-        # Optional: Adjust font sizes based on window width
-        if event.width < 450:
-            title_label.config(font=("Segoe UI", 14, "bold"))
+        if role == 'admin':
+            c.execute('''INSERT INTO permissions 
+                        (user_id, can_view_interventions, can_add_interventions, can_edit_interventions, 
+                         can_delete_interventions, can_view_stock, can_add_stock, can_edit_stock, 
+                         can_delete_stock, can_manage_users) 
+                        VALUES (?, 1, 1, 1, 1, 1, 1, 1, 1, 1)''', (user_id,))
+        elif role == 'technicien':
+            c.execute('''INSERT INTO permissions 
+                        (user_id, can_view_interventions, can_add_interventions, can_edit_interventions, 
+                         can_delete_interventions, can_view_stock, can_add_stock, can_edit_stock, 
+                         can_delete_stock, can_manage_users) 
+                        VALUES (?, 1, 1, 0, 0, 1, 0, 0, 0, 0)''', (user_id,))
         else:
-            title_label.config(font=("Segoe UI", 16, "bold"))
+            c.execute('''INSERT INTO permissions 
+                        (user_id, can_view_interventions, can_add_interventions, can_edit_interventions, 
+                         can_delete_interventions, can_view_stock, can_add_stock, can_edit_stock, 
+                         can_delete_stock, can_manage_users) 
+                        VALUES (?, 1, 0, 0, 0, 1, 0, 0, 0, 0)''', (user_id,))
+        
+        conn.commit()
+        c.execute("SELECT * FROM permissions WHERE user_id=?", (user_id,))
+        permissions = c.fetchone()
     
-    password_window.bind('<Configure>', on_resize)
+    conn.close()
     
-    password_window.mainloop()
-# === Maintenance Reminder System ===
-def check_reminders(root):
-    def run_check():
-        while True:
-            try:
-                conn = sqlite3.connect(DB_FILE)
-                c = conn.cursor()
-                today = datetime.now().date()
-                reminder_limit = today + timedelta(days=7)
-                
-                c.execute('''SELECT e.numero_serie, p.date_prevue, p.type_maintenance 
-                             FROM planification p
-                             JOIN equipements e ON p.equipement_id = e.id
-                             WHERE date_prevue BETWEEN ? AND ? AND statut = 'Planifié' ''', 
-                          (str(today), str(reminder_limit)))
-                reminders = c.fetchall()
-                conn.close()
-                
-                if reminders:
-                    message = "Rappel : Maintenances prévues dans les 7 jours :\n\n"
-                    for equipment_serial, date, maintenance_type in reminders:
-                        message += f"- Équipement {equipment_serial} : {maintenance_type} prévu le {date}\n"
-                    
-                    # Show reminder in main thread
-                    root.after(0, lambda: messagebox.showinfo("Rappel Maintenance Préventive", message))
-            except Exception as e:
-                print(f"Error in reminder check: {e}")
-            
-            # Check once per day
-            time.sleep(24 * 60 * 60)
-    
-    # Start reminder checker in background thread
-    reminder_thread = threading.Thread(target=run_check, daemon=True)
-    reminder_thread.start()
+    return {
+        'can_view_interventions': bool(permissions[2]),
+        'can_add_interventions': bool(permissions[3]),
+        'can_edit_interventions': bool(permissions[4]),
+        'can_delete_interventions': bool(permissions[5]),
+        'can_view_stock': bool(permissions[6]),
+        'can_add_stock': bool(permissions[7]),
+        'can_edit_stock': bool(permissions[8]),
+        'can_delete_stock': bool(permissions[9]),
+        'can_manage_users': bool(permissions[10])
+    }
 
 # === Authentication System ===
 def authentication():
@@ -422,12 +298,12 @@ def authentication():
                 'id': user[0],
                 'username': user[1],
                 'role': user[3],
-                'first_login': user[4]
+                'first_login': user[4],
+                'permissions': get_user_permissions(user[0])
             }
             
             auth_window.destroy()
             
-            # Check if first login, require password change
             if current_user['first_login']:
                 force_password_change()
             else:
@@ -437,12 +313,11 @@ def authentication():
 
     auth_window = tk.Tk()
     auth_window.title("Authentification - GMAO")
-    auth_window.geometry("450x400")  # Increased default size
-    auth_window.minsize(400, 350)    # Set minimum size
-    auth_window.maxsize(600, 500)    # Set maximum size
-    auth_window.resizable(True, True)  # Make window resizable
+    auth_window.geometry("450x400")
+    auth_window.minsize(400, 350)
+    auth_window.maxsize(600, 500)
+    auth_window.resizable(True, True)
     
-    # Center window on screen
     auth_window.update_idletasks()
     width = auth_window.winfo_width()
     height = auth_window.winfo_height()
@@ -451,15 +326,11 @@ def authentication():
     auth_window.geometry(f'{width}x{height}+{x}+{y}')
     
     auth_window.configure(bg=ProfessionalTheme.PRIMARY)
-    
-    # Configure styles
     ProfessionalTheme.configure_styles()
     
-    # Main frame with padding that adjusts to window size
     main_frame = tk.Frame(auth_window, bg=ProfessionalTheme.PRIMARY)
     main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
     
-    # Title with dynamic font size based on window size
     title_label = tk.Label(main_frame, text="GMAO System", font=("Segoe UI", 24, "bold"), 
                           bg=ProfessionalTheme.PRIMARY, fg=ProfessionalTheme.WHITE)
     title_label.pack(pady=(30, 10))
@@ -469,11 +340,9 @@ def authentication():
                              fg=ProfessionalTheme.LIGHT)
     subtitle_label.pack(pady=(0, 20))
     
-    # Login form with responsive layout
     login_frame = tk.Frame(main_frame, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
     login_frame.pack(fill=tk.BOTH, expand=True, pady=20)
     
-    # Username section
     username_frame = tk.Frame(login_frame, bg=ProfessionalTheme.WHITE)
     username_frame.pack(fill=tk.X, padx=30, pady=(20, 5))
     
@@ -483,9 +352,8 @@ def authentication():
     entry_username = tk.Entry(username_frame, font=("Segoe UI", 12), 
                             bd=1, relief="solid", highlightthickness=0)
     entry_username.pack(fill=tk.X, pady=(5, 0))
-    entry_username.insert(0, "admin")  # Default to admin for convenience
+    entry_username.insert(0, "admin")
     
-    # Password section
     password_frame = tk.Frame(login_frame, bg=ProfessionalTheme.WHITE)
     password_frame.pack(fill=tk.X, padx=30, pady=(15, 5))
     
@@ -497,7 +365,6 @@ def authentication():
     entry_password.pack(fill=tk.X, pady=(5, 0))
     entry_password.focus()
     
-    # Button frame with responsive positioning
     button_frame = tk.Frame(login_frame, bg=ProfessionalTheme.WHITE)
     button_frame.pack(fill=tk.X, padx=30, pady=20)
     
@@ -505,20 +372,16 @@ def authentication():
                             font=("Segoe UI", 10, "bold"), bg=ProfessionalTheme.PRIMARY, 
                             fg=ProfessionalTheme.WHITE, bd=0, padx=30, pady=10, 
                             activebackground=ProfessionalTheme.SECONDARY,
-                            cursor="hand2")  # Add hand cursor
+                            cursor="hand2")
     login_button.pack()
     
-    # Add some padding at the bottom
     bottom_padding = tk.Frame(login_frame, bg=ProfessionalTheme.WHITE, height=20)
     bottom_padding.pack(fill=tk.X)
     
-    # Bind Enter key to login
     entry_password.bind('<Return>', lambda event: verify_password())
     entry_username.bind('<Return>', lambda event: entry_password.focus())
     
-    # Add window resize handler to adjust font sizes if needed
     def on_resize(event):
-        # Optional: Adjust font sizes based on window width
         if event.width < 450:
             title_label.config(font=("Segoe UI", 20, "bold"))
             subtitle_label.config(font=("Segoe UI", 9))
@@ -527,24 +390,112 @@ def authentication():
             subtitle_label.config(font=("Segoe UI", 10))
     
     auth_window.bind('<Configure>', on_resize)
-    
     auth_window.mainloop()
+
+def force_password_change():
+    change_window = tk.Tk()
+    change_window.title("Changement de mot de passe requis")
+    change_window.geometry("450x350")
+    change_window.minsize(400, 300)
+    change_window.configure(bg=ProfessionalTheme.LIGHT)
+    # Changed from resizable(False, False) to resizable(True, True)
+    change_window.resizable(True, True)
+    
+    change_window.update_idletasks()
+    width = change_window.winfo_width()
+    height = change_window.winfo_height()
+    x = (change_window.winfo_screenwidth() // 2) - (width // 2)
+    y = (change_window.winfo_screenheight() // 2) - (height // 2)
+    change_window.geometry(f'{width}x{height}+{x}+{y}')
+    
+    header_frame = tk.Frame(change_window, bg=ProfessionalTheme.PRIMARY, height=60)
+    header_frame.pack(fill=tk.X)
+    header_frame.pack_propagate(False)
+    
+    tk.Label(header_frame, text="Changement de mot de passe", 
+            font=ProfessionalTheme.TITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
+            fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=15)
+    
+    form_container = tk.Frame(change_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
+    form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+    
+    tk.Label(form_container, text=f"Bienvenue {current_user['username']}!\n\nVeuillez changer votre mot de passe pour continuer.", 
+            font=ProfessionalTheme.BODY_FONT, bg=ProfessionalTheme.WHITE, 
+            fg=ProfessionalTheme.DARK, justify="center").pack(pady=20)
+    
+    tk.Label(form_container, text="Mot de passe actuel:", font=ProfessionalTheme.BODY_FONT, 
+            bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).pack(anchor="w", padx=20, pady=(10, 5))
+    entry_current = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                            show='*', bd=1, relief="solid", highlightthickness=0)
+    entry_current.pack(fill=tk.X, padx=20, pady=(0, 10))
+    
+    tk.Label(form_container, text="Nouveau mot de passe:", font=ProfessionalTheme.BODY_FONT, 
+            bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).pack(anchor="w", padx=20, pady=(10, 5))
+    entry_new = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                        show='*', bd=1, relief="solid", highlightthickness=0)
+    entry_new.pack(fill=tk.X, padx=20, pady=(0, 10))
+    
+    tk.Label(form_container, text="Confirmer le mot de passe:", font=ProfessionalTheme.BODY_FONT, 
+            bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).pack(anchor="w", padx=20, pady=(10, 5))
+    entry_confirm = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
+                             show='*', bd=1, relief="solid", highlightthickness=0)
+    entry_confirm.pack(fill=tk.X, padx=20, pady=(0, 20))
+    
+    def change_password():
+        current = entry_current.get()
+        new_pass = entry_new.get()
+        confirm = entry_confirm.get()
+        
+        if not current or not new_pass or not confirm:
+            messagebox.showwarning("Attention", "Tous les champs sont obligatoires")
+            return
+        
+        if hash_password(current) != hash_password(INITIAL_PASSWORD):
+            messagebox.showerror("Erreur", "Mot de passe actuel incorrect")
+            return
+        
+        if new_pass != confirm:
+            messagebox.showerror("Erreur", "Les mots de passe ne correspondent pas")
+            return
+        
+        if len(new_pass) < 6:
+            messagebox.showwarning("Attention", "Le mot de passe doit contenir au moins 6 caractères")
+            return
+        
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("UPDATE users SET password_hash=?, first_login=0 WHERE id=?",
+                 (hash_password(new_pass), current_user['id']))
+        conn.commit()
+        conn.close()
+        
+        messagebox.showinfo("Succès", "Mot de passe changé avec succès!")
+        change_window.destroy()
+        open_gmao_interface()
+    
+    button_frame = tk.Frame(form_container, bg=ProfessionalTheme.WHITE)
+    button_frame.pack(pady=20)
+    
+    ttk.Button(button_frame, text="Changer le mot de passe", command=change_password, 
+              style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
+    ttk.Button(button_frame, text="Annuler", command=lambda: [change_window.destroy(), logout()], 
+              style="Danger.TButton").pack(side=tk.LEFT)
+    
+    entry_current.focus()
+    change_window.mainloop()
 
 # === Main GMAO Interface ===
 def open_gmao_interface():
     global root, entry_serial
     
-    # Main application window
     root = tk.Tk()
     root.title(f"🔧 Système GMAO - {current_user['username']}")
     root.geometry("900x700")
     root.minsize(800, 600)
     root.configure(bg=ProfessionalTheme.LIGHT)
     
-    # Configure styles
     ProfessionalTheme.configure_styles()
     
-    # Header
     header_frame = tk.Frame(root, bg=ProfessionalTheme.PRIMARY, height=70)
     header_frame.pack(fill=tk.X)
     header_frame.pack_propagate(False)
@@ -556,11 +507,10 @@ def open_gmao_interface():
              font=ProfessionalTheme.BODY_FONT, fg=ProfessionalTheme.LIGHT, 
              bg=ProfessionalTheme.PRIMARY).pack(side=tk.LEFT, padx=(0, 20), pady=20)
     
-    # User info and logout
     user_frame = tk.Frame(header_frame, bg=ProfessionalTheme.PRIMARY)
     user_frame.pack(side=tk.RIGHT, padx=20, pady=15)
     
-    tk.Label(user_frame, text=f"Utilisateur: {current_user['username']}", 
+    tk.Label(user_frame, text=f"Utilisateur: {current_user['username']} ({current_user['role']})", 
              font=ProfessionalTheme.BODY_FONT, fg=ProfessionalTheme.WHITE, 
              bg=ProfessionalTheme.PRIMARY).pack(side=tk.LEFT, padx=(0, 15))
     
@@ -569,11 +519,9 @@ def open_gmao_interface():
                              fg=ProfessionalTheme.WHITE, bd=0, padx=10, pady=5)
     logout_button.pack(side=tk.LEFT)
     
-    # Main container
     main_container = tk.Frame(root, bg=ProfessionalTheme.LIGHT)
     main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
     
-    # Search section
     search_frame = tk.Frame(main_container, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
     search_frame.pack(fill=tk.X, pady=(0, 20))
     
@@ -587,22 +535,19 @@ def open_gmao_interface():
     entry_serial = tk.Entry(search_subframe, font=ProfessionalTheme.BODY_FONT, 
                            bd=1, relief="solid", highlightthickness=0)
     entry_serial.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
-    entry_serial.focus()
     
-    # Management buttons frame
     buttons_frame = tk.Frame(main_container, bg=ProfessionalTheme.LIGHT)
     buttons_frame.pack(fill=tk.X, pady=(0, 20))
     
-    # Stock Management Button
-    ttk.Button(buttons_frame, text="📦 Gestion des Pièces de Rechange", 
-              command=open_parts_management, style="Warning.TButton").pack(side=tk.LEFT, padx=(0, 10))
+    if current_user['permissions']['can_view_stock']:
+        stock_button = ttk.Button(buttons_frame, text="📦 Gestion des Pièces de Rechange", 
+                                command=open_parts_management, style="Warning.TButton")
+        stock_button.pack(side=tk.LEFT, padx=(0, 10))
     
-    # Profile Management Button (only for admin)
-    if current_user['role'] == 'admin':
+    if current_user['permissions']['can_manage_users']:
         ttk.Button(buttons_frame, text="👤 Gestion des Profils", 
                   command=open_profile_management, style="Primary.TButton").pack(side=tk.LEFT)
     
-    # Footer
     footer_frame = tk.Frame(root, bg=ProfessionalTheme.PRIMARY, height=40)
     footer_frame.pack(fill=tk.X, side=tk.BOTTOM)
     footer_frame.pack_propagate(False)
@@ -611,13 +556,10 @@ def open_gmao_interface():
              font=ProfessionalTheme.BODY_FONT, bg=ProfessionalTheme.PRIMARY, 
              fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=10)
     
-    # Handle Enter key in search field
     entry_serial.bind('<Return>', lambda event: search_equipment())
     
-    # Initialize reminder system
     check_reminders(root)
     
-    # Run main loop
     root.mainloop()
 
 def logout():
@@ -626,17 +568,16 @@ def logout():
     root.destroy()
     authentication()
 
+# === Profile Management ===
 def open_profile_management():
     def create_profile_window():
         profile_window = tk.Toplevel(root)
         profile_window.title("👤 Gestion des Profils Utilisateurs")
-        profile_window.geometry("900x600")
+        profile_window.geometry("1000x700")
         profile_window.configure(bg=ProfessionalTheme.LIGHT)
         
-        # Configure styles
         ProfessionalTheme.configure_styles()
         
-        # Header
         header_frame = tk.Frame(profile_window, bg=ProfessionalTheme.PRIMARY, height=60)
         header_frame.pack(fill=tk.X)
         header_frame.pack_propagate(False)
@@ -645,20 +586,17 @@ def open_profile_management():
                 font=ProfessionalTheme.TITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
                 fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=15)
         
-        # Main container
         main_container = tk.Frame(profile_window, bg=ProfessionalTheme.LIGHT)
         main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         
-        # Button frame
         button_frame = tk.Frame(main_container, bg=ProfessionalTheme.LIGHT)
         button_frame.pack(fill=tk.X, pady=(0, 15))
         
-        # Users Table
         table_frame = tk.Frame(main_container, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
         table_frame.pack(fill=tk.BOTH, expand=True)
         
         columns = ("ID", "Nom d'utilisateur", "Rôle", "Première connexion", "Date de création")
-        tree_users = ttk.Treeview(table_frame, columns=columns, show="headings", height=18)
+        tree_users = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
         for col in columns:
             tree_users.heading(col, text=col)
             tree_users.column(col, width=(50 if col == "ID" else 150))
@@ -683,10 +621,9 @@ def open_profile_management():
         def add_user():
             add_window = tk.Toplevel(profile_window)
             add_window.title("Ajouter un utilisateur")
-            add_window.geometry("500x400")
+            add_window.geometry("600x600")
             add_window.configure(bg=ProfessionalTheme.LIGHT)
             
-            # Header
             header_frame = tk.Frame(add_window, bg=ProfessionalTheme.PRIMARY, height=50)
             header_frame.pack(fill=tk.X)
             header_frame.pack_propagate(False)
@@ -695,7 +632,6 @@ def open_profile_management():
                     font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
                     fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
             
-            # Form container
             form_container = tk.Frame(add_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
             form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
             
@@ -711,7 +647,7 @@ def open_profile_management():
                     row=i, column=0, sticky="w", padx=20, pady=12)
                 
                 if key == "role":
-                    entry = ttk.Combobox(form_container, values=["admin", "user"], state="readonly")
+                    entry = ttk.Combobox(form_container, values=["admin", "technicien", "user"], state="readonly")
                     entry.set("user")
                 else:
                     entry = tk.Entry(form_container, font=ProfessionalTheme.BODY_FONT, 
@@ -720,6 +656,60 @@ def open_profile_management():
                 
                 entry.grid(row=i, column=1, padx=20, pady=12, sticky="ew")
                 entries[key] = entry
+            
+            permissions_frame = tk.LabelFrame(form_container, text="Permissions", 
+                                             font=ProfessionalTheme.SUBTITLE_FONT, 
+                                             bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY)
+            permissions_frame.grid(row=len(fields), column=0, columnspan=2, padx=20, pady=20, sticky="ew")
+            
+            permission_vars = {}
+            permissions = [
+                ("can_view_interventions", "Voir les interventions"),
+                ("can_add_interventions", "Ajouter des interventions"),
+                ("can_edit_interventions", "Modifier des interventions"),
+                ("can_delete_interventions", "Supprimer les interventions"),
+                ("can_view_stock", "Voir le stock"),
+                ("can_add_stock", "Ajouter au stock"),
+                ("can_edit_stock", "Modifier le stock"),
+                ("can_delete_stock", "Supprimer du stock"),
+                ("can_manage_users", "Gérer les utilisateurs")
+            ]
+            
+            for i, (key, label) in enumerate(permissions):
+                var = tk.IntVar()
+                permission_vars[key] = var
+                cb = tk.Checkbutton(permissions_frame, text=label, variable=var, 
+                                   font=ProfessionalTheme.BODY_FONT, 
+                                   bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK)
+                cb.grid(row=i//3, column=i%3, sticky="w", padx=20, pady=5)
+            
+            def on_role_change(event):
+                role = entries["role"].get()
+                if role == "admin":
+                    for key in permission_vars:
+                        permission_vars[key].set(1)
+                elif role == "technicien":
+                    permission_vars["can_view_interventions"].set(1)
+                    permission_vars["can_add_interventions"].set(1)
+                    permission_vars["can_edit_interventions"].set(0)
+                    permission_vars["can_delete_interventions"].set(0)
+                    permission_vars["can_view_stock"].set(1)
+                    permission_vars["can_add_stock"].set(0)
+                    permission_vars["can_edit_stock"].set(0)
+                    permission_vars["can_delete_stock"].set(0)
+                    permission_vars["can_manage_users"].set(0)
+                else:
+                    permission_vars["can_view_interventions"].set(1)
+                    permission_vars["can_add_interventions"].set(0)
+                    permission_vars["can_edit_interventions"].set(0)
+                    permission_vars["can_delete_interventions"].set(0)
+                    permission_vars["can_view_stock"].set(1)
+                    permission_vars["can_add_stock"].set(0)
+                    permission_vars["can_edit_stock"].set(0)
+                    permission_vars["can_delete_stock"].set(0)
+                    permission_vars["can_manage_users"].set(0)
+            
+            entries["role"].bind("<<ComboboxSelected>>", on_role_change)
             
             def save_user():
                 username = entries["username"].get().strip()
@@ -740,6 +730,24 @@ def open_profile_management():
                     c.execute('''INSERT INTO users (username, password_hash, role, first_login)
                                  VALUES (?, ?, ?, ?)''', 
                               (username, hash_password(password), role, 1))
+                    user_id = c.lastrowid
+                    
+                    c.execute('''INSERT INTO permissions 
+                                (user_id, can_view_interventions, can_add_interventions, can_edit_interventions, 
+                                 can_delete_interventions, can_view_stock, can_add_stock, can_edit_stock, 
+                                 can_delete_stock, can_manage_users) 
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', 
+                              (user_id, 
+                               permission_vars["can_view_interventions"].get(),
+                               permission_vars["can_add_interventions"].get(),
+                               permission_vars["can_edit_interventions"].get(),
+                               permission_vars["can_delete_interventions"].get(),
+                               permission_vars["can_view_stock"].get(),
+                               permission_vars["can_add_stock"].get(),
+                               permission_vars["can_edit_stock"].get(),
+                               permission_vars["can_delete_stock"].get(),
+                               permission_vars["can_manage_users"].get()))
+                    
                     conn.commit()
                     messagebox.showinfo("Succès", "Utilisateur ajouté avec succès.")
                     add_window.destroy()
@@ -750,11 +758,159 @@ def open_profile_management():
                     conn.close()
             
             button_frame = tk.Frame(form_container, bg=ProfessionalTheme.WHITE)
-            button_frame.grid(row=len(fields), column=0, columnspan=2, pady=20)
+            button_frame.grid(row=len(fields)+1, column=0, columnspan=2, pady=20)
             
             ttk.Button(button_frame, text="Sauvegarder", command=save_user, 
                       style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
             ttk.Button(button_frame, text="Annuler", command=add_window.destroy, 
+                      style="Danger.TButton").pack(side=tk.LEFT)
+            
+            form_container.columnconfigure(1, weight=1)
+        
+        def edit_user():
+            selected = tree_users.selection()
+            if not selected:
+                messagebox.showwarning("Attention", "Sélectionnez un utilisateur à modifier")
+                return
+            
+            values = tree_users.item(selected[0], 'values')
+            user_id = values[0]
+            username = values[1]
+            
+            if username == current_user['username']:
+                messagebox.showwarning("Attention", "Vous ne pouvez pas modifier votre propre profil ici")
+                return
+            
+            edit_window = tk.Toplevel(profile_window)
+            edit_window.title("Modifier un utilisateur")
+            edit_window.geometry("600x600")
+            edit_window.configure(bg=ProfessionalTheme.LIGHT)
+            
+            header_frame = tk.Frame(edit_window, bg=ProfessionalTheme.PRIMARY, height=50)
+            header_frame.pack(fill=tk.X)
+            header_frame.pack_propagate(False)
+            
+            tk.Label(header_frame, text=f"Modifier l'utilisateur: {username}", 
+                    font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
+                    fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
+            
+            form_container = tk.Frame(edit_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
+            form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+            
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT username, role FROM users WHERE id=?", (user_id,))
+            user_data = c.fetchone()
+            
+            c.execute('''SELECT can_view_interventions, can_add_interventions, can_edit_interventions, 
+                         can_delete_interventions, can_view_stock, can_add_stock, can_edit_stock, 
+                         can_delete_stock, can_manage_users FROM permissions WHERE user_id=?''', (user_id,))
+            user_permissions = c.fetchone()
+            conn.close()
+            
+            tk.Label(form_container, text="Rôle *:", font=ProfessionalTheme.BODY_FONT, 
+                    bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
+                row=0, column=0, sticky="w", padx=20, pady=12)
+            
+            entry_role = ttk.Combobox(form_container, values=["admin", "technicien", "user"], state="readonly")
+            entry_role.set(user_data[1])
+            entry_role.grid(row=0, column=1, padx=20, pady=12, sticky="ew")
+            
+            permissions_frame = tk.LabelFrame(form_container, text="Permissions", 
+                                             font=ProfessionalTheme.SUBTITLE_FONT, 
+                                             bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY)
+            permissions_frame.grid(row=1, column=0, columnspan=2, padx=20, pady=20, sticky="ew")
+            
+            permission_vars = {}
+            permissions = [
+                ("can_view_interventions", "Voir les interventions"),
+                ("can_add_interventions", "Ajouter des interventions"),
+                ("can_edit_interventions", "Modifier des interventions"),
+                ("can_delete_interventions", "Supprimer les interventions"),
+                ("can_view_stock", "Voir le stock"),
+                ("can_add_stock", "Ajouter au stock"),
+                ("can_edit_stock", "Modifier le stock"),
+                ("can_delete_stock", "Supprimer du stock"),
+                ("can_manage_users", "Gérer les utilisateurs")
+            ]
+            
+            for i, (key, label) in enumerate(permissions):
+                var = tk.IntVar()
+                permission_vars[key] = var
+                cb = tk.Checkbutton(permissions_frame, text=label, variable=var, 
+                                   font=ProfessionalTheme.BODY_FONT, 
+                                   bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK)
+                cb.grid(row=i//3, column=i%3, sticky="w", padx=20, pady=5)
+                
+                idx = permissions.index((key, label))
+                var.set(user_permissions[idx])
+            
+            def on_role_change(event):
+                role = entry_role.get()
+                if role == "admin":
+                    for key in permission_vars:
+                        permission_vars[key].set(1)
+                elif role == "technicien":
+                    permission_vars["can_view_interventions"].set(1)
+                    permission_vars["can_add_interventions"].set(1)
+                    permission_vars["can_edit_interventions"].set(0)
+                    permission_vars["can_delete_interventions"].set(0)
+                    permission_vars["can_view_stock"].set(1)
+                    permission_vars["can_add_stock"].set(0)
+                    permission_vars["can_edit_stock"].set(0)
+                    permission_vars["can_delete_stock"].set(0)
+                    permission_vars["can_manage_users"].set(0)
+                else:
+                    permission_vars["can_view_interventions"].set(1)
+                    permission_vars["can_add_interventions"].set(0)
+                    permission_vars["can_edit_interventions"].set(0)
+                    permission_vars["can_delete_interventions"].set(0)
+                    permission_vars["can_view_stock"].set(1)
+                    permission_vars["can_add_stock"].set(0)
+                    permission_vars["can_edit_stock"].set(0)
+                    permission_vars["can_delete_stock"].set(0)
+                    permission_vars["can_manage_users"].set(0)
+            
+            entry_role.bind("<<ComboboxSelected>>", on_role_change)
+            
+            def save_changes():
+                role = entry_role.get()
+                
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                try:
+                    c.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+                    
+                    c.execute('''UPDATE permissions SET 
+                                can_view_interventions=?, can_add_interventions=?, can_edit_interventions=?, 
+                                can_delete_interventions=?, can_view_stock=?, can_add_stock=?, can_edit_stock=?, 
+                                can_delete_stock=?, can_manage_users=? WHERE user_id=?''', 
+                              (permission_vars["can_view_interventions"].get(),
+                               permission_vars["can_add_interventions"].get(),
+                               permission_vars["can_edit_interventions"].get(),
+                               permission_vars["can_delete_interventions"].get(),
+                               permission_vars["can_view_stock"].get(),
+                               permission_vars["can_add_stock"].get(),
+                               permission_vars["can_edit_stock"].get(),
+                               permission_vars["can_delete_stock"].get(),
+                               permission_vars["can_manage_users"].get(),
+                               user_id))
+                    
+                    conn.commit()
+                    messagebox.showinfo("Succès", "Utilisateur modifié avec succès.")
+                    edit_window.destroy()
+                    refresh_users()
+                except sqlite3.Error as e:
+                    messagebox.showerror("Erreur", f"Une erreur est survenue: {str(e)}")
+                finally:
+                    conn.close()
+            
+            button_frame = tk.Frame(form_container, bg=ProfessionalTheme.WHITE)
+            button_frame.grid(row=2, column=0, columnspan=2, pady=20)
+            
+            ttk.Button(button_frame, text="Sauvegarder", command=save_changes, 
+                      style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
+            ttk.Button(button_frame, text="Annuler", command=edit_window.destroy, 
                       style="Danger.TButton").pack(side=tk.LEFT)
             
             form_container.columnconfigure(1, weight=1)
@@ -776,7 +932,6 @@ def open_profile_management():
             if not messagebox.askyesno("Confirmation", f"Voulez-vous réinitialiser le mot de passe de '{username}' ?\nL'utilisateur devra le changer à la prochaine connexion."):
                 return
             
-            # Reset password to initial password and set first_login flag
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
             c.execute("UPDATE users SET password_hash=?, first_login=1 WHERE id=?",
@@ -806,6 +961,7 @@ def open_profile_management():
             
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
+            c.execute("DELETE FROM permissions WHERE user_id=?", (user_id,))
             c.execute("DELETE FROM users WHERE id=?", (user_id,))
             conn.commit()
             conn.close()
@@ -813,9 +969,10 @@ def open_profile_management():
             messagebox.showinfo("Succès", f"Utilisateur '{username}' supprimé avec succès")
             refresh_users()
         
-        # Add buttons after defining all functions
         ttk.Button(button_frame, text="➕ Ajouter un utilisateur", command=add_user, 
                   style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="✏️ Modifier", command=edit_user, 
+                  style="Warning.TButton").pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(button_frame, text="🔄 Réinitialiser mot de passe", command=reset_password, 
                   style="Warning.TButton").pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(button_frame, text="🗑 Supprimer", command=delete_user, 
@@ -827,9 +984,9 @@ def open_profile_management():
         
         return profile_window
     
-    # Use the window manager to open/create the window
     return window_manager.open_window("profile_management", create_profile_window)
 
+# === Parts Management ===
 def open_parts_management():
     def create_stock_window():
         stock_window = tk.Toplevel(root)
@@ -837,10 +994,8 @@ def open_parts_management():
         stock_window.geometry("1200x700")
         stock_window.configure(bg=ProfessionalTheme.LIGHT)
         
-        # Configure styles
         ProfessionalTheme.configure_styles()
         
-        # Header
         header_frame = tk.Frame(stock_window, bg=ProfessionalTheme.PRIMARY, height=60)
         header_frame.pack(fill=tk.X)
         header_frame.pack_propagate(False)
@@ -849,15 +1004,12 @@ def open_parts_management():
                 font=ProfessionalTheme.TITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
                 fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=15)
         
-        # Main container
         main_container = tk.Frame(stock_window, bg=ProfessionalTheme.LIGHT)
         main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         
-        # Button frame
         button_frame = tk.Frame(main_container, bg=ProfessionalTheme.LIGHT)
         button_frame.pack(fill=tk.X, pady=(0, 15))
         
-        # Parts Table
         table_frame = tk.Frame(main_container, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
         table_frame.pack(fill=tk.BOTH, expand=True)
         
@@ -884,12 +1036,15 @@ def open_parts_management():
                 tree_parts.insert("", tk.END, values=row)
         
         def add_part():
+            if not current_user['permissions']['can_add_stock']:
+                messagebox.showwarning("Accès refusé", "Vous n'avez pas la permission d'ajouter des pièces au stock")
+                return
+                
             add_window = tk.Toplevel(stock_window)
             add_window.title("Ajouter une pièce")
             add_window.geometry("500x500")
             add_window.configure(bg=ProfessionalTheme.LIGHT)
             
-            # Header
             header_frame = tk.Frame(add_window, bg=ProfessionalTheme.PRIMARY, height=50)
             header_frame.pack(fill=tk.X)
             header_frame.pack_propagate(False)
@@ -898,7 +1053,6 @@ def open_parts_management():
                     font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
                     fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
             
-            # Form container
             form_container = tk.Frame(add_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
             form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
             
@@ -968,6 +1122,10 @@ def open_parts_management():
             form_container.columnconfigure(1, weight=1)
         
         def edit_part():
+            if not current_user['permissions']['can_edit_stock']:
+                messagebox.showwarning("Accès refusé", "Vous n'avez pas la permission de modifier des pièces")
+                return
+                
             selected = tree_parts.selection()
             if not selected:
                 messagebox.showwarning("Attention", "Sélectionnez une pièce à modifier.")
@@ -981,7 +1139,6 @@ def open_parts_management():
             edit_window.geometry("500x500")
             edit_window.configure(bg=ProfessionalTheme.LIGHT)
             
-            # Header
             header_frame = tk.Frame(edit_window, bg=ProfessionalTheme.PRIMARY, height=50)
             header_frame.pack(fill=tk.X)
             header_frame.pack_propagate(False)
@@ -990,7 +1147,6 @@ def open_parts_management():
                     font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
                     fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
             
-            # Form container
             form_container = tk.Frame(edit_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
             form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
             
@@ -1058,6 +1214,10 @@ def open_parts_management():
             form_container.columnconfigure(1, weight=1)
         
         def delete_part():
+            if not current_user['permissions']['can_delete_stock']:
+                messagebox.showwarning("Accès refusé", "Vous n'avez pas la permission de supprimer des pièces")
+                return
+                
             selected = tree_parts.selection()
             if not selected:
                 messagebox.showwarning("Attention", "Sélectionnez une pièce à supprimer.")
@@ -1093,27 +1253,31 @@ def open_parts_management():
             else:
                 messagebox.showinfo("Stock", "Tous les articles ont un niveau de stock suffisant.")
         
-        # Add buttons after defining all functions
-        ttk.Button(button_frame, text="➕ Ajouter une pièce", command=add_part, 
-                  style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(button_frame, text="✏️ Modifier", command=edit_part, 
-                  style="Warning.TButton").pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(button_frame, text="🗑 Supprimer", command=delete_part, 
-                  style="Danger.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        if current_user['permissions']['can_add_stock']:
+            ttk.Button(button_frame, text="➕ Ajouter une pièce", command=add_part, 
+                      style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        
+        if current_user['permissions']['can_edit_stock']:
+            ttk.Button(button_frame, text="✏️ Modifier", command=edit_part, 
+                      style="Warning.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        
+        if current_user['permissions']['can_delete_stock']:
+            ttk.Button(button_frame, text="🗑 Supprimer", command=delete_part, 
+                      style="Danger.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        
         ttk.Button(button_frame, text="🔄 Rafraîchir", command=refresh_stock, 
                   style="Primary.TButton").pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(button_frame, text="🔔 Vérifier stock faible", command=check_low_stock, 
                   style="Warning.TButton").pack(side=tk.LEFT)
         
         refresh_stock()
-        check_low_stock()  # Initial check
+        check_low_stock()
         
         return stock_window
     
-    # Use the window manager to open/create the window
     return window_manager.open_window("parts_management", create_stock_window)
 
-# Main search functionality
+# === Equipment Search and History ===
 def search_equipment():
     global entry_serial
     
@@ -1140,7 +1304,6 @@ def create_equipment_form(serial_number):
         form_window.geometry("600x700")
         form_window.configure(bg=ProfessionalTheme.LIGHT)
         
-        # Header
         header_frame = tk.Frame(form_window, bg=ProfessionalTheme.PRIMARY, height=60)
         header_frame.pack(fill=tk.X)
         header_frame.pack_propagate(False)
@@ -1149,7 +1312,6 @@ def create_equipment_form(serial_number):
                 font=ProfessionalTheme.TITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
                 fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=15)
         
-        # Form container
         form_container = tk.Frame(form_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
         form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         
@@ -1243,10 +1405,8 @@ def create_equipment_form(serial_number):
         
         return form_window
     
-    # Use the window manager to open/create the window
     return window_manager.open_window(f"equipment_form_{serial_number}", create_form_window)
 
-# Maintenance history display
 def show_equipment_history(equipment_id, serial_number):
     def create_history_window():
         history_window = tk.Toplevel(root)
@@ -1254,10 +1414,8 @@ def show_equipment_history(equipment_id, serial_number):
         history_window.geometry("1200x800")
         history_window.configure(bg=ProfessionalTheme.LIGHT)
         
-        # Configure styles
         ProfessionalTheme.configure_styles()
         
-        # Header
         header_frame = tk.Frame(history_window, bg=ProfessionalTheme.PRIMARY, height=60)
         header_frame.pack(fill=tk.X)
         header_frame.pack_propagate(False)
@@ -1266,7 +1424,6 @@ def show_equipment_history(equipment_id, serial_number):
                 font=ProfessionalTheme.TITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
                 fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=15)
         
-        # Main container
         main_container = tk.Frame(history_window, bg=ProfessionalTheme.LIGHT)
         main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         
@@ -1307,11 +1464,9 @@ def show_equipment_history(equipment_id, serial_number):
         repairs_frame = ttk.Frame(notebook)
         notebook.add(repairs_frame, text="Historique des Réparations")
         
-        # Button frame
         button_frame = tk.Frame(repairs_frame, bg=ProfessionalTheme.LIGHT)
         button_frame.pack(fill=tk.X, padx=10, pady=10)
         
-        # Table frame
         table_frame = tk.Frame(repairs_frame, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
         table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
         
@@ -1339,27 +1494,21 @@ def show_equipment_history(equipment_id, serial_number):
             for intervention in interventions:
                 tree.insert("", tk.END, values=intervention)
         
-        # Temporary pieces storage for new interventions
-        selected_pieces = []  # List of dicts: {'piece_id':.., 'name':.., 'price':.., 'qty':.., 'total_cost':..}
+        selected_pieces = []
         
         def manage_used_pieces(parent_window):
-            # Check if a pieces window for this parent already exists
             for child in parent_window.winfo_children():
                 if isinstance(child, tk.Toplevel) and hasattr(child, 'pieces_selection'):
                     child.lift()
                     child.focus_force()
                     return
             
-            # Create new window
             pieces_window = tk.Toplevel(parent_window)
             pieces_window.title("Associer des pièces à l'intervention")
             pieces_window.geometry("900x500")
             pieces_window.configure(bg=ProfessionalTheme.LIGHT)
-            
-            # Add a custom attribute to identify this window type
             pieces_window.pieces_selection = True
             
-            # Header
             header_frame = tk.Frame(pieces_window, bg=ProfessionalTheme.PRIMARY, height=50)
             header_frame.pack(fill=tk.X)
             header_frame.pack_propagate(False)
@@ -1368,11 +1517,9 @@ def show_equipment_history(equipment_id, serial_number):
                     font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
                     fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
             
-            # Main container
             main_container = tk.Frame(pieces_window, bg=ProfessionalTheme.LIGHT)
             main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
             
-            # Left: Available pieces
             left_frame = tk.Frame(main_container, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
             left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
             
@@ -1386,7 +1533,6 @@ def show_equipment_history(equipment_id, serial_number):
                 tree_left.column(col, width=(50 if col == "ID" else 120))
             tree_left.pack(padx=10, pady=(0, 10), fill=tk.BOTH, expand=True)
             
-            # Right: Selected pieces
             right_frame = tk.Frame(main_container, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
             right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
             
@@ -1439,7 +1585,6 @@ def show_equipment_history(equipment_id, serial_number):
                     messagebox.showwarning("Erreur", "Veuillez entrer un nombre valide")
                     return
                 
-                # Check if piece already selected
                 for item in tree_right.get_children():
                     item_values = tree_right.item(item, 'values')
                     if int(item_values[0]) == int(piece_id):
@@ -1447,11 +1592,9 @@ def show_equipment_history(equipment_id, serial_number):
                                               f"Pièce '{name}' déjà sélectionnée")
                         return
                 
-                # Add to selected pieces
                 total_cost = quantity * float(price)
                 tree_right.insert("", tk.END, values=(piece_id, name, quantity, price, f"{total_cost:.2f}"))
                 
-                # Store in selected_pieces list
                 selected_pieces.append({
                     'piece_id': int(piece_id),
                     'name': name,
@@ -1466,19 +1609,15 @@ def show_equipment_history(equipment_id, serial_number):
                     messagebox.showwarning("Attention", "Sélectionnez une pièce à retirer")
                     return
                 
-                # Remove from tree
                 values = tree_right.item(selected[0], 'values')
                 piece_id = int(values[0])
                 tree_right.delete(selected[0])
                 
-                # Remove from selected_pieces list
                 nonlocal selected_pieces
                 selected_pieces = [p for p in selected_pieces if p['piece_id'] != piece_id]
-                # Refresh stock in left panel
                 load_pieces_list()
             
             def validate_selection():
-                # Validate all pieces have sufficient stock
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
                 valid = True
@@ -1497,26 +1636,21 @@ def show_equipment_history(equipment_id, serial_number):
                 if valid:
                     pieces_window.destroy()
             
-            # Middle button container
             middle_container = tk.Frame(main_container, bg=ProfessionalTheme.LIGHT)
             middle_container.pack(side=tk.LEFT, fill=tk.Y, padx=10)
             
-            # Add piece button
             ttk.Button(middle_container, text="→ Ajouter", command=select_for_intervention, 
                       style="Success.TButton").pack(pady=5)
             
-            # Remove piece button
             ttk.Button(middle_container, text="← Retirer", command=remove_from_intervention, 
                       style="Danger.TButton").pack(pady=5)
             
-            # Bottom button container
             bottom_container = tk.Frame(pieces_window, bg=ProfessionalTheme.LIGHT)
             bottom_container.pack(fill=tk.X, padx=20, pady=(0, 20))
             
             ttk.Button(bottom_container, text="Valider", command=validate_selection, 
                       style="Primary.TButton").pack(side=tk.RIGHT)
             
-            # Initially load pieces
             load_pieces_list()
         
         def view_intervention_details():
@@ -1528,7 +1662,6 @@ def show_equipment_history(equipment_id, serial_number):
             values = tree.item(selected[0], 'values')
             intervention_id = values[0]
             
-            # Check if details window already exists
             if f"intervention_details_{intervention_id}" in window_manager.windows:
                 window_manager.windows[f"intervention_details_{intervention_id}"].lift()
                 window_manager.windows[f"intervention_details_{intervention_id}"].focus_force()
@@ -1540,7 +1673,6 @@ def show_equipment_history(equipment_id, serial_number):
                 details_window.geometry("700x500")
                 details_window.configure(bg=ProfessionalTheme.LIGHT)
                 
-                # Header
                 header_frame = tk.Frame(details_window, bg=ProfessionalTheme.PRIMARY, height=50)
                 header_frame.pack(fill=tk.X)
                 header_frame.pack_propagate(False)
@@ -1549,18 +1681,15 @@ def show_equipment_history(equipment_id, serial_number):
                         font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
                         fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
                 
-                # Details container
                 details_container = tk.Frame(details_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
                 details_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
                 
-                # Load intervention data
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
                 c.execute('''SELECT date_entree, date_sortie, technicien, cout, details_reparation 
                              FROM interventions WHERE id=?''', (intervention_id,))
                 intervention = c.fetchone()
                 
-                # Load associated pieces
                 c.execute('''SELECT p.nom, ip.quantite_utilisee, p.prix_unitaire, ip.cout_total
                              FROM intervention_pieces ip
                              JOIN pieces p ON ip.piece_id = p.id
@@ -1568,7 +1697,6 @@ def show_equipment_history(equipment_id, serial_number):
                 pieces = c.fetchall()
                 conn.close()
                 
-                # Display intervention details
                 basic_info = [
                     ("Date d'entrée:", intervention[0]),
                     ("Date de sortie:", intervention[1] or "N/A"),
@@ -1584,7 +1712,6 @@ def show_equipment_history(equipment_id, serial_number):
                             bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK, 
                             anchor="w").grid(row=i, column=1, sticky="w", pady=10, padx=(20, 20))
                 
-                # Details section
                 tk.Label(details_container, text="Détails:", font=ProfessionalTheme.SUBTITLE_FONT, 
                         bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY, 
                         anchor="nw").grid(row=4, column=0, sticky="nw", pady=10, padx=20)
@@ -1595,13 +1722,11 @@ def show_equipment_history(equipment_id, serial_number):
                 details_text.insert("1.0", intervention[4] or "")
                 details_text.config(state=tk.DISABLED)
                 
-                # Pieces section
                 if pieces:
                     tk.Label(details_container, text="Pièces utilisées:", font=ProfessionalTheme.SUBTITLE_FONT, 
                             bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.PRIMARY, 
                             anchor="w").grid(row=5, column=0, sticky="w", pady=10, padx=20)
                     
-                    # Pieces table
                     pieces_frame = tk.Frame(details_container, bg=ProfessionalTheme.WHITE)
                     pieces_frame.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 20), padx=20)
                     
@@ -1622,8 +1747,12 @@ def show_equipment_history(equipment_id, serial_number):
             window_manager.open_window(f"intervention_details_{intervention_id}", create_details_window)
         
         def add_intervention():
+            if not current_user['permissions']['can_add_interventions']:
+                messagebox.showwarning("Accès refusé", "Vous n'avez pas la permission d'ajouter des interventions")
+                return
+                
             nonlocal selected_pieces
-            selected_pieces = []  # Reset selections
+            selected_pieces = []
             
             def create_add_window():
                 add_window = tk.Toplevel(history_window)
@@ -1631,7 +1760,6 @@ def show_equipment_history(equipment_id, serial_number):
                 add_window.geometry("600x600")
                 add_window.configure(bg=ProfessionalTheme.LIGHT)
                 
-                # Header
                 header_frame = tk.Frame(add_window, bg=ProfessionalTheme.PRIMARY, height=50)
                 header_frame.pack(fill=tk.X)
                 header_frame.pack_propagate(False)
@@ -1640,11 +1768,9 @@ def show_equipment_history(equipment_id, serial_number):
                         font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
                         fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
                 
-                # Form container
                 form_container = tk.Frame(add_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
                 form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
                 
-                # Form fields
                 tk.Label(form_container, text="Date d'entrée *:", font=ProfessionalTheme.BODY_FONT, 
                         bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
                     row=0, column=0, sticky="w", padx=20, pady=12)
@@ -1688,7 +1814,6 @@ def show_equipment_history(equipment_id, serial_number):
                     cost_str = entry_cost.get().strip()
                     details = text_details.get("1.0", tk.END).strip()
                     
-                    # Validate required fields
                     if not date_in:
                         messagebox.showwarning("Attention", "Date d'entrée obligatoire")
                         return
@@ -1699,7 +1824,6 @@ def show_equipment_history(equipment_id, serial_number):
                         messagebox.showwarning("Erreur", "Coût invalide")
                         return
                     
-                    # Validate dates
                     try:
                         datetime.strptime(date_in, "%Y-%m-%d")
                         if date_out:
@@ -1708,7 +1832,6 @@ def show_equipment_history(equipment_id, serial_number):
                         messagebox.showwarning("Erreur", "Format de date invalide (YYYY-MM-DD)")
                         return
                     
-                    # Save intervention to database
                     conn = sqlite3.connect(DB_FILE)
                     c = conn.cursor()
                     c.execute('''INSERT INTO interventions 
@@ -1718,24 +1841,20 @@ def show_equipment_history(equipment_id, serial_number):
                     intervention_id = c.lastrowid
                     conn.commit()
                     
-                    # Save pieces usage if any
                     total_pieces_cost = 0
                     if selected_pieces:
                         for piece in selected_pieces:
-                            # Save piece usage
                             c.execute('''INSERT INTO intervention_pieces 
                                       (intervention_id, piece_id, quantite_utilisee, cout_total) 
                                       VALUES (?, ?, ?, ?)''',
                                       (intervention_id, piece['piece_id'], piece['qty'], piece['total_cost']))
                             
-                            # Update stock
                             c.execute("SELECT quantite_stock FROM pieces WHERE id=?", (piece['piece_id'],))
                             current_stock = c.fetchone()[0]
                             new_stock = current_stock - piece['qty']
                             c.execute("UPDATE pieces SET quantite_stock=? WHERE id=?", 
                                      (new_stock, piece['piece_id']))
                         
-                        # Update intervention cost
                         total_cost = cost + sum(p['total_cost'] for p in selected_pieces)
                         c.execute("UPDATE interventions SET cout=? WHERE id=?", (total_cost, intervention_id))
                     
@@ -1746,7 +1865,6 @@ def show_equipment_history(equipment_id, serial_number):
                     add_window.destroy()
                     refresh_interventions()
                 
-                # Buttons
                 button_frame = tk.Frame(form_container, bg=ProfessionalTheme.WHITE)
                 button_frame.grid(row=5, column=0, columnspan=2, pady=20)
                 
@@ -1767,6 +1885,10 @@ def show_equipment_history(equipment_id, serial_number):
             window_manager.open_window(f"add_intervention_{equipment_id}", create_add_window)
         
         def edit_intervention():
+            if not current_user['permissions']['can_edit_interventions']:
+                messagebox.showwarning("Accès refusé", "Vous n'avez pas la permission de modifier des interventions")
+                return
+                
             selected = tree.selection()
             if not selected:
                 messagebox.showwarning("Attention", "Sélectionnez une intervention à modifier")
@@ -1781,7 +1903,6 @@ def show_equipment_history(equipment_id, serial_number):
                 edit_window.geometry("600x600")
                 edit_window.configure(bg=ProfessionalTheme.LIGHT)
                 
-                # Header
                 header_frame = tk.Frame(edit_window, bg=ProfessionalTheme.PRIMARY, height=50)
                 header_frame.pack(fill=tk.X)
                 header_frame.pack_propagate(False)
@@ -1790,18 +1911,15 @@ def show_equipment_history(equipment_id, serial_number):
                         font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
                         fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
                 
-                # Form container
                 form_container = tk.Frame(edit_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
                 form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
                 
-                # Load intervention data
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
                 c.execute('''SELECT date_entree, date_sortie, technicien, cout, details_reparation 
                              FROM interventions WHERE id=?''', (intervention_id,))
                 intervention = c.fetchone()
                 
-                # Load original piece associations
                 c.execute('''SELECT ip.piece_id, p.nom, ip.quantite_utilisee, p.prix_unitaire, ip.cout_total
                              FROM intervention_pieces ip
                              JOIN pieces p ON ip.piece_id = p.id
@@ -1809,7 +1927,6 @@ def show_equipment_history(equipment_id, serial_number):
                 original_pieces = c.fetchall()
                 conn.close()
                 
-                # Initialize selected_pieces with original pieces
                 selected_pieces = []
                 for piece in original_pieces:
                     piece_dict = {
@@ -1821,7 +1938,6 @@ def show_equipment_history(equipment_id, serial_number):
                     }
                     selected_pieces.append(piece_dict)
                 
-                # Form fields
                 tk.Label(form_container, text="Date d'entrée *:", font=ProfessionalTheme.BODY_FONT, 
                         bg=ProfessionalTheme.WHITE, fg=ProfessionalTheme.DARK).grid(
                     row=0, column=0, sticky="w", padx=20, pady=12)
@@ -1869,7 +1985,6 @@ def show_equipment_history(equipment_id, serial_number):
                     cost_str = entry_cost.get().strip()
                     details = text_details.get("1.0", tk.END).strip()
                     
-                    # Validate required fields
                     if not date_in:
                         messagebox.showwarning("Attention", "Date d'entrée obligatoire")
                         return
@@ -1880,7 +1995,6 @@ def show_equipment_history(equipment_id, serial_number):
                         messagebox.showwarning("Erreur", "Coût invalide")
                         return
                     
-                    # Validate dates
                     try:
                         datetime.strptime(date_in, "%Y-%m-%d")
                         if date_out:
@@ -1889,37 +2003,30 @@ def show_equipment_history(equipment_id, serial_number):
                         messagebox.showwarning("Erreur", "Format de date invalide (YYYY-MM-DD)")
                         return
                     
-                    # Save intervention changes to database
                     conn = sqlite3.connect(DB_FILE)
                     c = conn.cursor()
                     
-                    # Restore stock for original pieces
                     for piece in original_pieces:
                         c.execute("SELECT quantite_stock FROM pieces WHERE id=?", (piece[0],))
                         current_stock = c.fetchone()[0]
-                        new_stock = current_stock + piece[2]  # Add back the quantity
+                        new_stock = current_stock + piece[2]
                         c.execute("UPDATE pieces SET quantite_stock=? WHERE id=?", (new_stock, piece[0]))
                     
-                    # Delete original piece associations
                     c.execute("DELETE FROM intervention_pieces WHERE intervention_id=?", (intervention_id,))
                     
-                    # Update intervention
                     c.execute('''UPDATE interventions SET 
                               date_entree=?, date_sortie=?, details_reparation=?, technicien=?, cout=? 
                               WHERE id=?''',
                               (date_in, date_out, details, technician, cost, intervention_id))
                     
-                    # Save pieces usage if any
                     total_pieces_cost = 0
                     if selected_pieces:
                         for piece in selected_pieces:
-                            # Save piece usage
                             c.execute('''INSERT INTO intervention_pieces 
                                       (intervention_id, piece_id, quantite_utilisee, cout_total) 
                                       VALUES (?, ?, ?, ?)''',
                                       (intervention_id, piece['piece_id'], piece['qty'], piece['total_cost']))
                             
-                            # Deduct stock
                             c.execute("SELECT quantite_stock FROM pieces WHERE id=?", (piece['piece_id'],))
                             current_stock = c.fetchone()[0]
                             new_stock = current_stock - piece['qty']
@@ -1935,23 +2042,18 @@ def show_equipment_history(equipment_id, serial_number):
                 
                 def manage_pieces():
                     def manage_used_pieces_edit(parent_window):
-                        # Check if a pieces window for this parent already exists
                         for child in parent_window.winfo_children():
                             if isinstance(child, tk.Toplevel) and hasattr(child, 'pieces_selection_edit'):
                                 child.lift()
                                 child.focus_force()
                                 return
                         
-                        # Create new window
                         pieces_window = tk.Toplevel(parent_window)
                         pieces_window.title("Gérer les pièces utilisées")
                         pieces_window.geometry("900x500")
                         pieces_window.configure(bg=ProfessionalTheme.LIGHT)
-                        
-                        # Add a custom attribute to identify this window type
                         pieces_window.pieces_selection_edit = True
                         
-                        # Header
                         header_frame = tk.Frame(pieces_window, bg=ProfessionalTheme.PRIMARY, height=50)
                         header_frame.pack(fill=tk.X)
                         header_frame.pack_propagate(False)
@@ -1960,11 +2062,9 @@ def show_equipment_history(equipment_id, serial_number):
                                 font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
                                 fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
                         
-                        # Main container
                         main_container = tk.Frame(pieces_window, bg=ProfessionalTheme.LIGHT)
                         main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
                         
-                        # Left: All available pieces
                         left_frame = tk.Frame(main_container, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
                         left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
                         
@@ -1978,7 +2078,6 @@ def show_equipment_history(equipment_id, serial_number):
                             tree_left.column(col, width=(50 if col == "ID" else 120))
                         tree_left.pack(padx=10, pady=(0, 10), fill=tk.BOTH, expand=True)
                         
-                        # Right: Currently selected pieces
                         right_frame = tk.Frame(main_container, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
                         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
                         
@@ -2038,7 +2137,6 @@ def show_equipment_history(equipment_id, serial_number):
                                 messagebox.showwarning("Erreur", "Veuillez entrer un nombre valide")
                                 return
                             
-                            # Check if piece already selected
                             for item in tree_right.get_children():
                                 item_values = tree_right.item(item, 'values')
                                 if int(item_values[0]) == int(piece_id):
@@ -2046,11 +2144,9 @@ def show_equipment_history(equipment_id, serial_number):
                                                           f"Pièce '{name}' déjà sélectionnée")
                                     return
                             
-                            # Add to selected pieces
                             total_cost = quantity * float(price)
                             tree_right.insert("", tk.END, values=(piece_id, name, quantity, price, f"{total_cost:.2f}"))
                             
-                            # Update selected_pieces list
                             nonlocal selected_pieces
                             selected_pieces.append({
                                 'piece_id': int(piece_id),
@@ -2066,47 +2162,37 @@ def show_equipment_history(equipment_id, serial_number):
                                 messagebox.showwarning("Attention", "Sélectionnez une pièce à retirer")
                                 return
                             
-                            # Remove from tree
                             values = tree_right.item(selected[0], 'values')
                             piece_id = int(values[0])
                             tree_right.delete(selected[0])
                             
-                            # Remove from selected_pieces list
                             nonlocal selected_pieces
                             selected_pieces = [p for p in selected_pieces if p['piece_id'] != piece_id]
-                            
-                            # Refresh available pieces list
                             load_all_pieces()
                         
                         def save_selection():
                             pieces_window.destroy()
                             
-                        # Middle button container
                         middle_container = tk.Frame(main_container, bg=ProfessionalTheme.LIGHT)
                         middle_container.pack(side=tk.LEFT, fill=tk.Y, padx=10)
                         
-                        # Add piece button
                         ttk.Button(middle_container, text="→ Ajouter", command=add_piece, 
                                   style="Success.TButton").pack(pady=5)
                         
-                        # Remove piece button
                         ttk.Button(middle_container, text="← Retirer", command=remove_piece, 
                                   style="Danger.TButton").pack(pady=5)
                         
-                        # Bottom button container
                         bottom_container = tk.Frame(pieces_window, bg=ProfessionalTheme.LIGHT)
                         bottom_container.pack(fill=tk.X, padx=20, pady=(0, 20))
                         
                         ttk.Button(bottom_container, text="Valider", command=save_selection, 
                                   style="Primary.TButton").pack(side=tk.RIGHT)
                         
-                        # Load data
                         load_all_pieces()
                         load_selected_pieces()
                     
                     manage_used_pieces_edit(edit_window)
                 
-                # Buttons
                 button_frame = tk.Frame(form_container, bg=ProfessionalTheme.WHITE)
                 button_frame.grid(row=5, column=0, columnspan=2, pady=20)
                 
@@ -2127,6 +2213,10 @@ def show_equipment_history(equipment_id, serial_number):
             window_manager.open_window(f"edit_intervention_{intervention_id}", create_edit_window)
         
         def delete_intervention():
+            if not current_user['permissions']['can_delete_interventions']:
+                messagebox.showwarning("Accès refusé", "Vous n'avez pas la permission de supprimer des interventions")
+                return
+                
             selected = tree.selection()
             if not selected:
                 messagebox.showwarning("Attention", "Sélectionnez une intervention à supprimer")
@@ -2138,22 +2228,18 @@ def show_equipment_history(equipment_id, serial_number):
             values = tree.item(selected[0], 'values')
             intervention_id = values[0]
             
-            # Restore stock for all pieces in this intervention
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
             
-            # Get used pieces
             c.execute("SELECT piece_id, quantite_utilisee FROM intervention_pieces WHERE intervention_id=?", (intervention_id,))
             used_pieces = c.fetchall()
             
-            # Restore stock for each piece
             for piece_id, quantity in used_pieces:
                 c.execute("SELECT quantite_stock FROM pieces WHERE id=?", (piece_id,))
                 current_stock = c.fetchone()[0]
                 new_stock = current_stock + quantity
                 c.execute("UPDATE pieces SET quantite_stock=? WHERE id=?", (new_stock, piece_id))
             
-            # Delete intervention and associated pieces
             c.execute("DELETE FROM intervention_pieces WHERE intervention_id=?", (intervention_id,))
             c.execute("DELETE FROM interventions WHERE id=?", (intervention_id,))
             conn.commit()
@@ -2162,15 +2248,21 @@ def show_equipment_history(equipment_id, serial_number):
             messagebox.showinfo("Succès", "Intervention supprimée avec succès!")
             refresh_interventions()
         
-        # Add buttons after defining all functions
-        ttk.Button(button_frame, text="➕ Ajouter Intervention", command=add_intervention, 
-                  style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(button_frame, text="✏️ Modifier", command=edit_intervention, 
-                  style="Warning.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        if current_user['permissions']['can_add_interventions']:
+            ttk.Button(button_frame, text="➕ Ajouter Intervention", command=add_intervention, 
+                      style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        
+        if current_user['permissions']['can_edit_interventions']:
+            ttk.Button(button_frame, text="✏️ Modifier", command=edit_intervention, 
+                      style="Warning.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        
         ttk.Button(button_frame, text="👁 Voir Détails", command=view_intervention_details, 
                   style="Primary.TButton").pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(button_frame, text="🗑 Supprimer", command=delete_intervention, 
-                  style="Danger.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        
+        if current_user['permissions']['can_delete_interventions']:
+            ttk.Button(button_frame, text="🗑 Supprimer", command=delete_intervention, 
+                      style="Danger.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        
         ttk.Button(button_frame, text="🔄 Rafraîchir", command=refresh_interventions, 
                   style="Primary.TButton").pack(side=tk.LEFT)
         
@@ -2180,11 +2272,9 @@ def show_equipment_history(equipment_id, serial_number):
         maintenance_frame = ttk.Frame(notebook)
         notebook.add(maintenance_frame, text="Maintenance Préventive")
         
-        # Button frame
         button_frame = tk.Frame(maintenance_frame, bg=ProfessionalTheme.LIGHT)
         button_frame.pack(fill=tk.X, padx=10, pady=10)
         
-        # Table frame
         table_frame = tk.Frame(maintenance_frame, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
         table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
         
@@ -2212,13 +2302,16 @@ def show_equipment_history(equipment_id, serial_number):
                 tree_maint.insert("", tk.END, values=maintenance)
         
         def add_maintenance():
+            if not current_user['permissions']['can_add_interventions']:
+                messagebox.showwarning("Accès refusé", "Vous n'avez pas la permission d'ajouter des maintenances")
+                return
+                
             def create_add_maint_window():
                 add_maint_window = tk.Toplevel(history_window)
                 add_maint_window.title("Planifier une maintenance")
                 add_maint_window.geometry("500x500")
                 add_maint_window.configure(bg=ProfessionalTheme.LIGHT)
                 
-                # Header
                 header_frame = tk.Frame(add_maint_window, bg=ProfessionalTheme.PRIMARY, height=50)
                 header_frame.pack(fill=tk.X)
                 header_frame.pack_propagate(False)
@@ -2227,7 +2320,6 @@ def show_equipment_history(equipment_id, serial_number):
                         font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
                         fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
                 
-                # Form container
                 form_container = tk.Frame(add_maint_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
                 form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
                 
@@ -2312,6 +2404,10 @@ def show_equipment_history(equipment_id, serial_number):
             window_manager.open_window(f"add_maintenance_{equipment_id}", create_add_maint_window)
         
         def edit_maintenance():
+            if not current_user['permissions']['can_edit_interventions']:
+                messagebox.showwarning("Accès refusé", "Vous n'avez pas la permission de modifier des maintenances")
+                return
+                
             selected = tree_maint.selection()
             if not selected:
                 messagebox.showwarning("Attention", "Sélectionnez une maintenance à modifier")
@@ -2326,7 +2422,6 @@ def show_equipment_history(equipment_id, serial_number):
                 edit_maint_window.geometry("500x500")
                 edit_maint_window.configure(bg=ProfessionalTheme.LIGHT)
                 
-                # Header
                 header_frame = tk.Frame(edit_maint_window, bg=ProfessionalTheme.PRIMARY, height=50)
                 header_frame.pack(fill=tk.X)
                 header_frame.pack_propagate(False)
@@ -2335,11 +2430,9 @@ def show_equipment_history(equipment_id, serial_number):
                         font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.PRIMARY, 
                         fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
                 
-                # Form container
                 form_container = tk.Frame(edit_maint_window, bg=ProfessionalTheme.WHITE, relief="raised", bd=1)
                 form_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
                 
-                # Load data
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
                 c.execute('''SELECT date_prevue, type_maintenance, technicien, statut, notes 
@@ -2431,6 +2524,10 @@ def show_equipment_history(equipment_id, serial_number):
             window_manager.open_window(f"edit_maintenance_{maintenance_id}", create_edit_maint_window)
         
         def delete_maintenance():
+            if not current_user['permissions']['can_delete_interventions']:
+                messagebox.showwarning("Accès refusé", "Vous n'avez pas la permission de supprimer des maintenances")
+                return
+                
             selected = tree_maint.selection()
             if not selected:
                 messagebox.showwarning("Attention", "Sélectionnez une maintenance à supprimer")
@@ -2451,13 +2548,18 @@ def show_equipment_history(equipment_id, serial_number):
             messagebox.showinfo("Succès", "Maintenance supprimée avec succès!")
             refresh_maintenance()
         
-        # Add buttons after defining all functions
-        ttk.Button(button_frame, text="➕ Planifier Maintenance", command=add_maintenance, 
-                  style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(button_frame, text="✏️ Modifier", command=edit_maintenance, 
-                  style="Warning.TButton").pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(button_frame, text="🗑 Supprimer", command=delete_maintenance, 
-                  style="Danger.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        if current_user['permissions']['can_add_interventions']:
+            ttk.Button(button_frame, text="➕ Planifier Maintenance", command=add_maintenance, 
+                      style="Success.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        
+        if current_user['permissions']['can_edit_interventions']:
+            ttk.Button(button_frame, text="✏️ Modifier", command=edit_maintenance, 
+                      style="Warning.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        
+        if current_user['permissions']['can_delete_interventions']:
+            ttk.Button(button_frame, text="🗑 Supprimer", command=delete_maintenance, 
+                      style="Danger.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        
         ttk.Button(button_frame, text="🔄 Rafraîchir", command=refresh_maintenance, 
                   style="Primary.TButton").pack(side=tk.LEFT)
         
@@ -2465,10 +2567,58 @@ def show_equipment_history(equipment_id, serial_number):
         
         return history_window
     
-    # Use the window manager to open/create the window
     return window_manager.open_window(f"equipment_history_{equipment_id}", create_history_window)
 
-# Initialize database and start application
+# === Reminder System ===
+def check_reminders(parent_window):
+    def check():
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        
+        seven_days_from_now = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+        c.execute('''SELECT e.numero_serie, e.marque, e.modele, p.date_prevue, p.type_maintenance 
+                     FROM planification p
+                     JOIN equipements e ON p.equipement_id = e.id
+                     WHERE p.date_prevue <= ? AND p.statut != "Terminé"
+                     ORDER BY p.date_prevue''', (seven_days_from_now,))
+        
+        upcoming_maintenances = c.fetchall()
+        conn.close()
+        
+        if upcoming_maintenances:
+            message = "MAINTENANCES PRÉVUES PROCHAINEMENT:\n\n"
+            for maintenance in upcoming_maintenances:
+                message += f"• {maintenance[0]} ({maintenance[1]} {maintenance[2]})\n"
+                message += f"  Date: {maintenance[3]}\n"
+                message += f"  Type: {maintenance[4]}\n\n"
+            
+            reminder_window = tk.Toplevel(parent_window)
+            reminder_window.title("Rappel de Maintenance")
+            reminder_window.geometry("500x400")
+            reminder_window.configure(bg=ProfessionalTheme.LIGHT)
+            
+            header_frame = tk.Frame(reminder_window, bg=ProfessionalTheme.WARNING, height=50)
+            header_frame.pack(fill=tk.X)
+            header_frame.pack_propagate(False)
+            
+            tk.Label(header_frame, text="⚠️ Rappel de Maintenance", 
+                    font=ProfessionalTheme.SUBTITLE_FONT, bg=ProfessionalTheme.WARNING, 
+                    fg=ProfessionalTheme.WHITE).pack(side=tk.LEFT, padx=20, pady=12)
+            
+            text_widget = tk.Text(reminder_window, font=ProfessionalTheme.BODY_FONT, 
+                                 wrap=tk.WORD, bd=1, relief="solid", highlightthickness=0)
+            text_widget.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+            text_widget.insert("1.0", message)
+            text_widget.config(state=tk.DISABLED)
+            
+            ttk.Button(reminder_window, text="Fermer", command=reminder_window.destroy, 
+                      style="Primary.TButton").pack(pady=10)
+        
+        parent_window.after(3600000, check)
+    
+    check()
+
+# === Main Entry Point ===
 if __name__ == "__main__":
     init_db()
     authentication()
